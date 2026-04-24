@@ -21,11 +21,21 @@ app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/health', async (_req, res) => {
+  const dbHostHint = (process.env.DATABASE_URL || '').match(/@([^:/?]+)/)?.[1] || null;
   try {
-    await pool.query('SELECT 1');
-    res.json({ status: 'ok', db: 'up' });
+    const { rows } = await pool.query('SELECT current_database() AS db, version() AS version');
+    res.json({ status: 'ok', db: 'up', database: rows[0].db, db_host: dbHostHint });
   } catch (err) {
-    res.status(503).json({ status: 'degraded', db: 'down', error: err.message });
+    res.status(503).json({
+      status: 'degraded',
+      db: 'down',
+      db_host: dbHostHint,
+      error: err.message || String(err) || 'unknown',
+      code: err.code,
+      errno: err.errno,
+      syscall: err.syscall,
+      hostname: err.hostname,
+    });
   }
 });
 
