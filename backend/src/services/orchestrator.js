@@ -14,7 +14,20 @@ async function runAnalyzer(experimentId) {
 
   try {
     await setStatus(experimentId, 'analyzing');
-    const angles = await stepAnalyzeAngles(ctx);
+
+    // Modo iteración Champion & Challenger: si hay parent, copiamos sus
+    // ángulos (saltea skill 1 — los ángulos estratégicos no cambian entre
+    // iteraciones del mismo brief).
+    let angles;
+    if (ctx.parent_experiment_id) {
+      const inherited = await loadParentAngles(ctx.parent_experiment_id);
+      if (!inherited.length) {
+        throw new Error(`Experimento padre #${ctx.parent_experiment_id} no tiene ángulos para heredar`);
+      }
+      angles = inherited;
+    } else {
+      angles = await stepAnalyzeAngles(ctx);
+    }
 
     await pool.query(
       `UPDATE experiments
@@ -34,7 +47,7 @@ async function runAnalyzer(experimentId) {
       [JSON.stringify(angles), experimentId],
     );
 
-    return { status: 'awaiting_review', angles };
+    return { status: 'awaiting_review', angles, inherited: !!ctx.parent_experiment_id };
   } catch (err) {
     console.error(`[orchestrator/analyzer] experimento ${experimentId} falló:`, err);
     await pool.query(
@@ -316,7 +329,7 @@ async function loadContext(id) {
   const { rows } = await pool.query(
     `SELECT e.id, e.name, e.status, e.champion_image_url, e.historical_data,
             e.brief_snapshot AS legacy_brief, e.angles, e.selected_angle_numbers,
-            e.product_id, e.channels,
+            e.product_id, e.channels, e.parent_experiment_id,
             e.platforms AS exp_platforms, e.formats AS exp_formats,
             p.brief_text, p.target_audience, p.key_benefit, p.context,
             p.platforms AS product_platforms, p.formats AS product_formats
@@ -393,6 +406,20 @@ async function patchJsonb(id, patch) {
  * excluyendo el experimento actual y los que fallaron. Devuelve un array
  * compacto con sólo los campos relevantes para evitar repetición.
  */
+/**
+ * Trae los ángulos del experimento padre, normalizando los `angle_number`
+ * para que sean secuenciales 1..5 (idempotente si ya lo eran).
+ */
+async function loadParentAngles(parentExperimentId) {
+  const { rows } = await pool.query(
+    `SELECT angles FROM experiments WHERE id = $1 AND deleted_at IS NULL`,
+    [parentExperimentId],
+  );
+  const angles = rows[0]?.angles;
+  if (!Array.isArray(angles)) return [];
+  return angles.map((a, i) => ({ ...a, angle_number: a.angle_number ?? i + 1 }));
+}
+
 async function loadPreviousAngles(productId, currentExperimentId, limit = 30) {
   const { rows } = await pool.query(
     `SELECT angle->>'angle_name' AS angle_name,

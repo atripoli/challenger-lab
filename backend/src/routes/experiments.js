@@ -24,6 +24,7 @@ const createSchema = z.object({
   champion_public_id: z.string().optional().nullable(),
   historical_data: z.any().optional(),
   channels: z.array(channelSchema).min(1, 'Elegí al menos un canal'),
+  parent_experiment_id: z.number().int().positive().optional().nullable(),
 });
 
 router.get(
@@ -75,6 +76,29 @@ router.post(
   requireRole('admin', 'analyst'),
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
+    // Si se pidió iterar sobre un parent, validamos que pertenezca al mismo producto.
+    if (data.parent_experiment_id) {
+      const { rows: parentRows } = await pool.query(
+        `SELECT id, product_id, status, jsonb_array_length(angles) AS n_angles
+           FROM experiments WHERE id = $1 AND deleted_at IS NULL`,
+        [data.parent_experiment_id],
+      );
+      const parent = parentRows[0];
+      if (!parent) {
+        return res.status(400).json({ error: 'Experimento padre no encontrado' });
+      }
+      if (parent.product_id !== data.product_id) {
+        return res.status(400).json({
+          error: 'El experimento padre debe pertenecer al mismo producto',
+        });
+      }
+      if (!parent.n_angles || parent.n_angles < 1) {
+        return res.status(400).json({
+          error: `Experimento padre #${parent.id} no tiene ángulos generados (status=${parent.status})`,
+        });
+      }
+    }
+
     // Derivar platforms/formats de los canales para retrocompat de queries.
     const derivedPlatforms = Array.from(new Set(data.channels.map((c) => c.platform)));
     const derivedFormats   = Array.from(new Set(data.channels.map((c) => c.format)));
@@ -82,8 +106,8 @@ router.post(
     const { rows } = await pool.query(
       `INSERT INTO experiments
          (product_id, name, brief_snapshot, champion_image_url, champion_public_id,
-          historical_data, channels, platforms, formats, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10)
+          historical_data, channels, platforms, formats, parent_experiment_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11)
        RETURNING *`,
       [
         data.product_id,
@@ -95,6 +119,7 @@ router.post(
         JSON.stringify(data.channels),
         JSON.stringify(derivedPlatforms),
         JSON.stringify(derivedFormats),
+        data.parent_experiment_id ?? null,
         req.user.sub,
       ],
     );

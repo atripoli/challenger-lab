@@ -27,12 +27,13 @@ const channelKey = (c) => `${c.platform}|${c.format}`;
 export default function ExperimentNew() {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
-  const [form, setForm] = useState({ product_id: '', name: '', channels: [] });
+  const [form, setForm] = useState({ product_id: '', name: '', channels: [], parent_experiment_id: '' });
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [historyCount, setHistoryCount] = useState(null);
+  const [productExperiments, setProductExperiments] = useState([]);
 
   useEffect(() => {
     api.get('/api/products').then((d) => setProducts(d.products));
@@ -65,7 +66,24 @@ export default function ExperimentNew() {
       }
       return { ...f, channels: seeded };
     });
+
+    // Cargar experimentos previos del mismo producto que tengan ángulos generados,
+    // para mostrarlos como posibles parents en el picker de iteración.
+    api.get(`/api/experiments?product_id=${selectedProduct.id}`)
+      .then((d) => {
+        const candidates = (d.experiments || []).filter(
+          (e) => e.status === 'completed' || e.status === 'awaiting_review' ||
+                 ['optimizing', 'executing', 'scoring'].includes(e.status),
+        );
+        setProductExperiments(candidates);
+      })
+      .catch(() => setProductExperiments([]));
   }, [selectedProduct?.id]);
+
+  const parentExperiment = useMemo(
+    () => productExperiments.find((e) => String(e.id) === String(form.parent_experiment_id)) || null,
+    [productExperiments, form.parent_experiment_id],
+  );
 
   function update(k, v) { setForm((f) => ({ ...f, [k]: v })); }
   function toggleChannel(option) {
@@ -98,13 +116,17 @@ export default function ExperimentNew() {
     setSubmitting(true);
     try {
       const uploaded = await api.upload('/api/uploads/champion', file);
-      const { experiment } = await api.post('/api/experiments', {
+      const body = {
         product_id: Number(form.product_id),
         name: form.name.trim(),
         champion_image_url: uploaded.url,
         champion_public_id: uploaded.public_id,
         channels: form.channels,
-      });
+      };
+      if (form.parent_experiment_id) {
+        body.parent_experiment_id = Number(form.parent_experiment_id);
+      }
+      const { experiment } = await api.post('/api/experiments', body);
       navigate(`/experiments/${experiment.id}`);
     } catch (err) {
       setError(err.message);
@@ -135,6 +157,31 @@ export default function ExperimentNew() {
       </Field>
 
       {selectedProduct && <ProductBriefPanel product={selectedProduct} historyCount={historyCount} />}
+
+      {selectedProduct && productExperiments.length > 0 && (
+        <Field
+          label="¿Iterar sobre un experimento existente? (opcional)"
+          hint="En Champion & Challenger los ángulos estratégicos son estables — lo que cambia entre iteraciones es la ejecución creativa. Si seleccionás un experimento padre, el Analyzer NO se ejecuta y los ángulos se heredan tal cual; sólo cambian el Champion (la imagen que subís ahora) y los nuevos creativos generados sobre los mismos ángulos."
+        >
+          <select
+            value={form.parent_experiment_id}
+            onChange={(e) => update('parent_experiment_id', e.target.value)}
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">— exploración nueva (Analyzer corre y genera 5 ángulos frescos) —</option>
+            {productExperiments.map((e) => (
+              <option key={e.id} value={e.id}>
+                #{e.id} · {e.name} {e.winner_id ? `· winner ${e.winner_id}` : ''}
+              </option>
+            ))}
+          </select>
+          {parentExperiment && (
+            <div className="mt-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-md p-2.5">
+              Iterando sobre <b>#{parentExperiment.id} · {parentExperiment.name}</b>. Los ángulos de ese experimento se van a copiar y vas a ir directo a la pantalla de revisión para seleccionar cuáles testear con los nuevos creativos.
+            </div>
+          )}
+        </Field>
+      )}
 
       <Field label="Nombre del experimento" required>
         <input
