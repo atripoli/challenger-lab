@@ -332,8 +332,51 @@ async function stepCreateExecutions(ctx, optimizedAngles) {
         throw new Error(`Ogilvy: ejecución #${ex.angle_number} no tiene creative para ${key}`);
       }
     }
+    // Validar que post_copy no exceda max × 1.5 del canal.
+    for (const c of ex.creatives) {
+      validatePostCopyLength(c, ex.angle_number);
+    }
   }
   return parsed.executions;
+}
+
+// MAX HARD por canal (debe matchear con el prompt v9 del Ogilvy).
+const POST_COPY_MAX = {
+  'facebook|feed':       200,
+  'instagram|feed':      220,
+  'linkedin|feed':       2000,
+  'linkedin|carousel':   1500,
+  'instagram|carousel':  300,
+  'instagram|reel':      200,
+  'facebook|reel':       200,
+  'tiktok|video':        150,
+  'tiktok|feed':         150,
+  'twitter|feed':        280,
+  'youtube|video':       300,
+  'youtube|shorts':      200,
+  'google|search':       90,
+  'google|display':      200,
+  // Stories: post_copy debe ser null. Cualquier valor > 0 es inválido también.
+  'facebook|stories':    0,
+  'instagram|stories':   0,
+};
+
+function validatePostCopyLength(creative, angleNumber) {
+  const key = `${String(creative.platform || '').toLowerCase()}|${String(creative.format || '').toLowerCase()}`;
+  const max = POST_COPY_MAX[key];
+  const len = creative.post_copy ? String(creative.post_copy).length : 0;
+  if (max == null) return; // canal no tipificado, se permite
+  if (max === 0 && len > 0) {
+    throw new Error(
+      `Ogilvy: #${angleNumber} ${key} no debe tener post_copy (Stories), pero recibimos ${len} chars`,
+    );
+  }
+  // Tolerancia 1.5×. Si excede 50% el max, fallar.
+  if (len > max * 1.5) {
+    throw new Error(
+      `Ogilvy: #${angleNumber} ${key} post_copy de ${len} chars excede el máximo permitido (${max} × 1.5 = ${Math.round(max * 1.5)})`,
+    );
+  }
 }
 
 async function stepScoreExecutions(ctx, executions) {
