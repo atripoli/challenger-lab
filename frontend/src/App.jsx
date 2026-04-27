@@ -7,6 +7,8 @@ import SkillPrompts from './pages/SkillPrompts.jsx';
 import Experiments from './pages/Experiments.jsx';
 import ExperimentNew from './pages/ExperimentNew.jsx';
 import ExperimentDetail from './pages/ExperimentDetail.jsx';
+import Clients from './pages/Clients.jsx';
+import ClientForm from './pages/ClientForm.jsx';
 import Products from './pages/Products.jsx';
 import ProductForm from './pages/ProductForm.jsx';
 import Placeholder from './pages/Placeholder.jsx';
@@ -27,7 +29,9 @@ export default function App() {
         <Route path="experiments"      element={<Experiments />} />
         <Route path="experiments/new"  element={<ProtectedRoute roles={['admin','analyst']}><ExperimentNew /></ProtectedRoute>} />
         <Route path="experiments/:id"  element={<ExperimentDetail />} />
-        <Route path="clients"          element={<Placeholder title="Clientes" description="ABM de clientes — conectar al endpoint /api/clients." />} />
+        <Route path="clients"          element={<Clients />} />
+        <Route path="clients/new"      element={<ProtectedRoute roles={['admin','analyst']}><ClientForm /></ProtectedRoute>} />
+        <Route path="clients/:id/edit" element={<ProtectedRoute roles={['admin','analyst']}><ClientForm /></ProtectedRoute>} />
         <Route path="products"         element={<Products />} />
         <Route path="products/new"     element={<ProtectedRoute roles={['admin','analyst']}><ProductForm /></ProtectedRoute>} />
         <Route path="products/:id/edit" element={<ProtectedRoute roles={['admin','analyst']}><ProductForm /></ProtectedRoute>} />
