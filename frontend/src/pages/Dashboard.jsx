@@ -36,7 +36,7 @@ export default function Dashboard() {
   if (error) return <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md p-3">{error}</div>;
   if (!stats) return null;
 
-  const { totals, uplift, winning_categories, platform_predictions, recent_completed, pipeline_duration } = stats;
+  const { totals, uplift, winning_categories, platform_predictions, recent_completed, pipeline_duration, calibration, results_aggregate } = stats;
   const isEmpty = totals.experiments === 0;
 
   return (
@@ -75,9 +75,46 @@ export default function Dashboard() {
 
           <UpliftDistribution uplift={uplift} />
 
+          {calibration && calibration.n > 0 && (
+            <CalibrationPanel calibration={calibration} resultsAgg={results_aggregate} />
+          )}
+
           <RecentCompleted items={recent_completed} />
         </>
       )}
+    </div>
+  );
+}
+
+function CalibrationPanel({ calibration, resultsAgg }) {
+  const delta = calibration.avg_delta;
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-sm font-medium text-slate-700">Calibración del Scorer (predicted vs actual)</h3>
+        <span className="text-[11px] text-slate-500">{calibration.n} resultado{calibration.n !== 1 ? 's' : ''} cargado{calibration.n !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+        <Stat label="Predicted promedio" value={calibration.avg_predicted?.toFixed(2) ?? '—'} />
+        <Stat label="Actual promedio"    value={calibration.avg_actual?.toFixed(2)    ?? '—'} />
+        <Stat
+          label="Δ (actual − predicted)"
+          value={delta != null ? `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}` : '—'}
+          positive={delta != null && delta > 0.5}
+          negative={delta != null && delta < -0.5}
+        />
+        {resultsAgg?.total_budget != null && (
+          <Stat
+            label="Budget total trackeado"
+            value={`${resultsAgg.currency || 'USD'} ${Number(resultsAgg.total_budget).toLocaleString('es-AR', { minimumFractionDigits: 0 })}`}
+          />
+        )}
+      </div>
+      <p className="text-xs text-slate-500 mt-3 text-center">
+        {delta != null && Math.abs(delta) < 0.5 && '✓ El Scorer está bien calibrado — sus predicciones se acercan a la performance real.'}
+        {delta != null && delta > 0.5 && 'El Scorer está siendo conservador: la realidad supera lo predicho.'}
+        {delta != null && delta < -0.5 && '⚠ El Scorer está sobreestimando: las predicciones son más optimistas que la realidad. Habría que revisar el prompt del Performance Scorer.'}
+      </p>
     </div>
   );
 }

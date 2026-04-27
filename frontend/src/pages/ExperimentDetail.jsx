@@ -138,6 +138,10 @@ export default function ExperimentDetail() {
           {exp.scores            && <ScoresBlock      scores={exp.scores} winnerId={exp.winner_id} champion={exp.champion_score} />}
         </div>
       </section>
+
+      {exp.status === 'completed' && (
+        <ResultsBlock experiment={exp} />
+      )}
     </div>
   );
 }
@@ -807,6 +811,341 @@ function val(v) {
   if (v == null) return null;
   if (typeof v === 'object') return v.score ?? null;
   return v;
+}
+
+// ---------------- Resultados de campaña post-launch ----------------
+
+function ResultsBlock({ experiment }) {
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const { results } = await api.get(`/api/experiments/${experiment.id}/results`);
+      setResults(results);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [experiment.id]);
+
+  async function handleSave(formData) {
+    setError(null);
+    const body = normalizeForSubmit(formData);
+    try {
+      if (editing && editing.id) {
+        await api.put(`/api/experiments/${experiment.id}/results/${editing.id}`, body);
+      } else {
+        await api.post(`/api/experiments/${experiment.id}/results`, body);
+      }
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleDelete(r) {
+    if (!confirm(`¿Eliminar este resultado (${r.challenger_id} en ${r.platform})?`)) return;
+    try {
+      await api.del(`/api/experiments/${experiment.id}/results/${r.id}`);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-slate-700">Resultados de campaña (post-launch)</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Cargá las métricas reales una vez que el challenger se haya corrido en producción. Cerramos el loop entre lo que el Scorer predijo y lo que pasó.
+          </p>
+        </div>
+        <button
+          onClick={() => setEditing({ ...EMPTY_RESULT, challenger_id: experiment.winner_id || '' })}
+          className="text-sm bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-md whitespace-nowrap"
+        >
+          Cargar resultados
+        </button>
+      </div>
+
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md p-3">{error}</div>}
+
+      {loading ? (
+        <div className="text-xs text-slate-500">Cargando…</div>
+      ) : !results || results.length === 0 ? (
+        <div className="bg-white border border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500">
+          Aún no cargaste métricas reales. El sistema va a comparar predicted_score vs actual cuando lo hagas.
+        </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600 text-xs">
+              <tr>
+                <th className="px-3 py-2 text-left">Challenger</th>
+                <th className="px-3 py-2 text-left">Plataforma</th>
+                <th className="px-3 py-2 text-right">Impres.</th>
+                <th className="px-3 py-2 text-right">Clicks</th>
+                <th className="px-3 py-2 text-right">CTR</th>
+                <th className="px-3 py-2 text-right">CVR</th>
+                <th className="px-3 py-2 text-right">CPA</th>
+                <th className="px-3 py-2 text-right">Budget</th>
+                <th className="px-3 py-2 text-right">Predicción</th>
+                <th className="px-3 py-2 text-right">Actual</th>
+                <th className="px-3 py-2 text-right w-32"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {results.map((r) => {
+                const delta = (r.actual_performance_score != null && r.predicted_score != null)
+                  ? Number(r.actual_performance_score) - Number(r.predicted_score)
+                  : null;
+                return (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 font-mono text-xs">{r.challenger_id}</td>
+                    <td className="px-3 py-2 text-slate-600">{r.platform}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtIntR(r.impressions)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtIntR(r.clicks)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtPctR(r.ctr)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtPctR(r.conversion_rate)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoneyR(r.cpa, r.currency)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoneyR(r.budget_spent, r.currency)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">{r.predicted_score ?? '—'}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">
+                      {r.actual_performance_score != null ? (
+                        <span className={delta == null ? 'text-slate-700' : delta >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'}>
+                          {Number(r.actual_performance_score).toFixed(1)}
+                          {delta != null && (
+                            <span className="text-[10px] ml-1">
+                              ({delta >= 0 ? '+' : ''}{delta.toFixed(1)})
+                            </span>
+                          )}
+                        </span>
+                      ) : <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right space-x-3">
+                      <button onClick={() => setEditing(r)} className="text-xs text-brand-600 hover:underline">Editar</button>
+                      <button onClick={() => handleDelete(r)} className="text-xs text-red-600 hover:underline">Eliminar</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {editing && (
+        <ResultEntryModal
+          initial={editing}
+          isNew={!editing.id}
+          experiment={experiment}
+          onSave={handleSave}
+          onCancel={() => setEditing(null)}
+        />
+      )}
+    </section>
+  );
+}
+
+const EMPTY_RESULT = {
+  challenger_id:            '',
+  platform:                 '',
+  impressions:              '',
+  clicks:                   '',
+  ctr:                      '',
+  conversions:              '',
+  conversion_rate:          '',
+  cpc:                      '',
+  cpa:                      '',
+  budget_spent:             '',
+  currency:                 'USD',
+  campaign_duration_days:   '',
+  actual_performance_score: '',
+  notes:                    '',
+};
+
+function ResultEntryModal({ initial, isNew, experiment, onSave, onCancel }) {
+  const [form, setForm] = useState({ ...initial });
+
+  // Opciones del dropdown: cada execution del experimento → angle_N
+  const challengerOptions = useMemo(() => {
+    const exs = Array.isArray(experiment.executions) ? experiment.executions : [];
+    return exs.map((ex) => {
+      const num = ex.angle_number ?? ex.id;
+      const angle = (Array.isArray(experiment.angles) ? experiment.angles : [])
+        .find((a) => a.angle_number === num);
+      const name = angle?.angle_name || ex.big_idea || `Ángulo ${num}`;
+      return { id: `angle_${num}`, label: `Ángulo #${num} · ${name}` };
+    });
+  }, [experiment]);
+
+  const platformOptions = useMemo(() => {
+    const channels = Array.isArray(experiment.channels) ? experiment.channels : [];
+    const set = new Set(channels.map((c) => c.platform));
+    return Array.from(set);
+  }, [experiment]);
+
+  function update(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+
+  // Auto-cómputo: si cambian impressions o clicks, calcular CTR.
+  function autoCompute(next) {
+    const ni = Number(next.impressions);
+    const nc = Number(next.clicks);
+    if (Number.isFinite(ni) && Number.isFinite(nc) && ni > 0) {
+      next.ctr = (nc / ni).toFixed(4);
+    }
+    const ncv = Number(next.conversions);
+    if (Number.isFinite(nc) && Number.isFinite(ncv) && nc > 0) {
+      next.conversion_rate = (ncv / nc).toFixed(4);
+    }
+    if (Number.isFinite(ncv) && ncv > 0 && Number.isFinite(Number(next.budget_spent))) {
+      next.cpa = (Number(next.budget_spent) / ncv).toFixed(2);
+    }
+    if (Number.isFinite(nc) && nc > 0 && Number.isFinite(Number(next.budget_spent))) {
+      next.cpc = (Number(next.budget_spent) / nc).toFixed(2);
+    }
+    return next;
+  }
+
+  function updateAuto(k, v) {
+    setForm((f) => autoCompute({ ...f, [k]: v }));
+  }
+
+  function submit(e) {
+    e.preventDefault();
+    if (!form.challenger_id || !form.platform) return;
+    onSave(form);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <form onSubmit={submit} className="bg-white rounded-lg w-full max-w-3xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {isNew ? 'Cargar resultado de campaña' : 'Editar resultado'}
+          </h2>
+          <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ModalField label="Challenger lanzado" required>
+              <select required value={form.challenger_id} onChange={(e) => update('challenger_id', e.target.value)}
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+                <option value="">— elegir —</option>
+                {challengerOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </ModalField>
+
+            <ModalField label="Plataforma" required>
+              <select required value={form.platform} onChange={(e) => update('platform', e.target.value)}
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+                <option value="">— elegir —</option>
+                {platformOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </ModalField>
+          </div>
+
+          <fieldset className="border border-slate-200 rounded-md p-4 space-y-3">
+            <legend className="text-xs uppercase tracking-wide text-slate-500 px-2">Performance</legend>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <NumFieldR label="Impresiones"     value={form.impressions}     onChange={(v) => updateAuto('impressions', v)}     step="1" />
+              <NumFieldR label="Clicks"          value={form.clicks}          onChange={(v) => updateAuto('clicks', v)}          step="1" />
+              <NumFieldR label="Conversiones"    value={form.conversions}     onChange={(v) => updateAuto('conversions', v)}     step="1" />
+              <NumFieldR label="Budget gastado"  value={form.budget_spent}    onChange={(v) => updateAuto('budget_spent', v)}    step="0.01" />
+              <NumFieldR label="CTR (auto)"      value={form.ctr}             onChange={(v) => update('ctr', v)}                 step="0.0001" max="1" />
+              <NumFieldR label="CVR (auto)"      value={form.conversion_rate} onChange={(v) => update('conversion_rate', v)}     step="0.0001" max="1" />
+              <NumFieldR label="CPC (auto)"      value={form.cpc}             onChange={(v) => update('cpc', v)}                 step="0.01" />
+              <NumFieldR label="CPA (auto)"      value={form.cpa}             onChange={(v) => update('cpa', v)}                 step="0.01" />
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-600">
+                Moneda
+                <input type="text" value={form.currency || 'USD'} maxLength={3}
+                       onChange={(e) => update('currency', e.target.value.toUpperCase())}
+                       className="ml-2 rounded-md border border-slate-300 px-2 py-1 text-sm w-16 uppercase font-mono" />
+              </label>
+              <label className="text-xs text-slate-600">
+                Días en aire
+                <input type="number" value={form.campaign_duration_days ?? ''} step="1" min="0"
+                       onChange={(e) => update('campaign_duration_days', e.target.value)}
+                       className="ml-2 rounded-md border border-slate-300 px-2 py-1 text-sm w-20 font-mono" />
+              </label>
+            </div>
+          </fieldset>
+
+          <ModalField
+            label="Tu evaluación de performance (0-10, opcional)"
+            hint="Score subjetivo del campaign manager. Lo comparamos con el predicted_score que calculó el Scorer para medir calibración."
+          >
+            <input type="number" value={form.actual_performance_score ?? ''} step="0.5" min="0" max="10"
+                   onChange={(e) => update('actual_performance_score', e.target.value)}
+                   className="mt-1 w-32 rounded-md border border-slate-300 px-3 py-2 text-sm font-mono" />
+          </ModalField>
+
+          <ModalField label="Notas">
+            <textarea rows={3} value={form.notes || ''} onChange={(e) => update('notes', e.target.value)}
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="Aprendizajes, problemas operativos, observaciones del público real, etc." />
+          </ModalField>
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700">Cancelar</button>
+          <button type="submit" className="rounded-md bg-brand-600 hover:bg-brand-700 text-white px-5 py-2 text-sm">Guardar</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ModalField({ label, required, hint, children }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">
+        {label} {required && <span className="text-red-500">*</span>}
+      </span>
+      {hint && <span className="block text-xs text-slate-500 mt-0.5">{hint}</span>}
+      {children}
+    </label>
+  );
+}
+
+function NumFieldR({ label, value, onChange, step, max }) {
+  return (
+    <label className="block">
+      <span className="text-xs text-slate-600">{label}</span>
+      <input type="number" value={value ?? ''} step={step} min={0} max={max}
+             onChange={(e) => onChange(e.target.value)}
+             className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm font-mono" />
+    </label>
+  );
+}
+
+function fmtIntR(n)      { return n != null ? Number(n).toLocaleString('es-AR') : '—'; }
+function fmtPctR(n)      { return n != null ? `${(Number(n) * 100).toFixed(2)}%` : '—'; }
+function fmtMoneyR(n, c) { return n != null ? `${c || 'USD'} ${Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'; }
+
+function normalizeForSubmit(f) {
+  const out = { ...f };
+  ['impressions', 'clicks', 'ctr', 'conversions', 'conversion_rate', 'cpc', 'cpa',
+   'budget_spent', 'campaign_duration_days', 'actual_performance_score']
+    .forEach((k) => {
+      if (out[k] === '' || out[k] == null) out[k] = null;
+      else out[k] = Number(out[k]);
+    });
+  if (!out.notes) out.notes = null;
+  return out;
 }
 
 // Reglas de longitud por canal — para flaggear variantes que se pasan.

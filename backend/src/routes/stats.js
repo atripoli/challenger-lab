@@ -18,6 +18,8 @@ router.get(
       platformPreds,
       recent,
       pipelineDuration,
+      calibration,
+      resultsAgg,
     ] = await Promise.all([
       pool.query(
         `SELECT status, COUNT(*)::int AS n
@@ -82,6 +84,24 @@ router.get(
             AND completed_at IS NOT NULL
             AND deleted_at IS NULL`,
       ),
+      // Calibración: predicted_score (0-10) vs actual_performance_score (0-10)
+      pool.query(
+        `SELECT
+           COUNT(*)::int                                       AS n,
+           AVG(predicted_score)::numeric(4,2)                  AS avg_predicted,
+           AVG(actual_performance_score)::numeric(4,2)         AS avg_actual,
+           AVG(actual_performance_score - predicted_score)::numeric(4,2) AS avg_delta
+           FROM experiment_results
+          WHERE predicted_score IS NOT NULL
+            AND actual_performance_score IS NOT NULL`,
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS n_results,
+                COUNT(DISTINCT experiment_id)::int AS n_experiments_with_results,
+                SUM(budget_spent)::numeric(12,2) AS total_budget,
+                MAX(currency) AS currency
+           FROM experiment_results`,
+      ),
     ]);
 
     // Totales por status
@@ -121,6 +141,18 @@ router.get(
       pipeline_duration: {
         avg_seconds: pipelineDuration.rows[0].avg_seconds,
         n:           pipelineDuration.rows[0].n,
+      },
+      calibration: {
+        n:             calibration.rows[0].n,
+        avg_predicted: calibration.rows[0].avg_predicted != null ? Number(calibration.rows[0].avg_predicted) : null,
+        avg_actual:    calibration.rows[0].avg_actual    != null ? Number(calibration.rows[0].avg_actual)    : null,
+        avg_delta:     calibration.rows[0].avg_delta     != null ? Number(calibration.rows[0].avg_delta)     : null,
+      },
+      results_aggregate: {
+        n_results:                  resultsAgg.rows[0].n_results,
+        n_experiments_with_results: resultsAgg.rows[0].n_experiments_with_results,
+        total_budget:               resultsAgg.rows[0].total_budget != null ? Number(resultsAgg.rows[0].total_budget) : null,
+        currency:                   resultsAgg.rows[0].currency,
       },
     });
   }),
