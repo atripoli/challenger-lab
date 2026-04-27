@@ -18,6 +18,8 @@ const createSchema = z.object({
   champion_image_url: z.string().url().optional().nullable(),
   champion_public_id: z.string().optional().nullable(),
   historical_data: z.any().optional(),
+  platforms: z.array(z.string()).min(1, 'Elegí al menos una plataforma'),
+  formats:   z.array(z.string()).min(1, 'Elegí al menos un formato'),
 });
 
 router.get(
@@ -71,8 +73,9 @@ router.post(
     const data = createSchema.parse(req.body);
     const { rows } = await pool.query(
       `INSERT INTO experiments
-         (product_id, name, brief_snapshot, champion_image_url, champion_public_id, historical_data, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+         (product_id, name, brief_snapshot, champion_image_url, champion_public_id,
+          historical_data, platforms, formats, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)
        RETURNING *`,
       [
         data.product_id,
@@ -81,6 +84,8 @@ router.post(
         data.champion_image_url ?? null,
         data.champion_public_id ?? null,
         data.historical_data != null ? JSON.stringify(data.historical_data) : null,
+        JSON.stringify(data.platforms),
+        JSON.stringify(data.formats),
         req.user.sub,
       ],
     );
@@ -94,7 +99,11 @@ const patchSchema = z.object({
   champion_image_url: z.string().url().nullable().optional(),
   champion_public_id: z.string().nullable().optional(),
   historical_data: z.any().optional(),
+  platforms: z.array(z.string()).min(1).optional(),
+  formats:   z.array(z.string()).min(1).optional(),
 });
+
+const JSONB_FIELDS = new Set(['historical_data', 'platforms', 'formats']);
 
 router.patch(
   '/:id',
@@ -107,8 +116,9 @@ router.patch(
     const setParts = [];
     const values = [];
     entries.forEach(([k, v]) => {
-      values.push(k === 'historical_data' ? JSON.stringify(v) : v);
-      setParts.push(`${k} = $${values.length}${k === 'historical_data' ? '::jsonb' : ''}`);
+      const isJsonb = JSONB_FIELDS.has(k);
+      values.push(isJsonb ? JSON.stringify(v) : v);
+      setParts.push(`${k} = $${values.length}${isJsonb ? '::jsonb' : ''}`);
     });
     values.push(req.params.id);
 

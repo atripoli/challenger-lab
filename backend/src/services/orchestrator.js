@@ -285,7 +285,9 @@ async function loadContext(id) {
     `SELECT e.id, e.name, e.status, e.champion_image_url, e.historical_data,
             e.brief_snapshot AS legacy_brief, e.angles, e.selected_angle_numbers,
             e.product_id,
-            p.brief_text, p.target_audience, p.key_benefit, p.context, p.platforms, p.formats
+            e.platforms AS exp_platforms, e.formats AS exp_formats,
+            p.brief_text, p.target_audience, p.key_benefit, p.context,
+            p.platforms AS product_platforms, p.formats AS product_formats
        FROM experiments e
        JOIN products p ON p.id = e.product_id
       WHERE e.id = $1 AND e.deleted_at IS NULL`,
@@ -294,6 +296,13 @@ async function loadContext(id) {
   if (!rows.length) return null;
   const r = rows[0];
   if (!r.brief_text && r.legacy_brief) r.brief_text = r.legacy_brief;
+  // platforms/formats ahora viven en el experimento; el producto sólo da defaults.
+  r.platforms = (Array.isArray(r.exp_platforms) && r.exp_platforms.length > 0)
+    ? r.exp_platforms
+    : (r.product_platforms || []);
+  r.formats = (Array.isArray(r.exp_formats) && r.exp_formats.length > 0)
+    ? r.exp_formats
+    : (r.product_formats || []);
 
   // Carga el histórico de campañas previas del producto.
   // Combina con el legacy `historical_data` del experimento (para experimentos

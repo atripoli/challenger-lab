@@ -202,7 +202,10 @@ export default function ProductForm() {
         />
       </Field>
 
-      <Field label="Plataformas objetivo" hint="Donde van a correr los challengers.">
+      <Field
+        label="Plataformas típicas (default sugerido)"
+        hint="Plataformas habituales del producto. Cada experimento podrá elegir un subconjunto distinto al crearse — esto sólo precarga el form."
+      >
         <ChipsGroup
           options={PLATFORM_OPTIONS}
           selected={form.platforms}
@@ -210,7 +213,10 @@ export default function ProductForm() {
         />
       </Field>
 
-      <Field label="Formatos" hint="Formatos creativos a producir.">
+      <Field
+        label="Formatos típicos (default sugerido)"
+        hint="Formatos habituales. Cada experimento puede sobreescribir."
+      >
         <ChipsGroup
           options={FORMAT_OPTIONS}
           selected={form.formats}

@@ -592,7 +592,7 @@ function ExecutionCard({ ex, winnerId }) {
       {/* Hashtags + tone */}
       {ex.hashtags && (
         <div className="text-xs text-brand-600">
-          {(Array.isArray(ex.hashtags) ? ex.hashtags : []).map((h) => `${String(h).startsWith('#') ? '' : '#'}${String(h).replace(/^#/, '')}`).join(' ')}
+          {(Array.isArray(ex.hashtags) ? ex.hashtags : []).map((h) => '#' + String(h).replace(/^#/, '')).join(' ')}
         </div>
       )}
     </div>

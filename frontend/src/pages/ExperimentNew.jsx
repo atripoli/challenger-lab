@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 
+const PLATFORM_OPTIONS = ['Facebook', 'Instagram', 'LinkedIn', 'TikTok', 'YouTube', 'Twitter', 'Google'];
+const FORMAT_OPTIONS   = ['feed', 'stories', 'carousel', 'reel', 'video', 'image', 'text'];
+
 export default function ExperimentNew() {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
-  const [form, setForm] = useState({ product_id: '', name: '' });
+  const [form, setForm] = useState({ product_id: '', name: '', platforms: [], formats: [] });
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -22,15 +25,28 @@ export default function ExperimentNew() {
   );
 
   // Cuando cambia el producto seleccionado, traemos cuántas campañas de
-  // histórico tiene cargadas (para mostrarle al usuario en el panel de contexto).
+  // histórico tiene cargadas + precargamos platforms/formats con los del producto.
   useEffect(() => {
     if (!selectedProduct) { setHistoryCount(null); return; }
     api.get(`/api/products/${selectedProduct.id}/history`)
       .then((d) => setHistoryCount(d.history.length))
       .catch(() => setHistoryCount(null));
+
+    // Precargar platforms/formats desde el producto si el form todavía está vacío.
+    setForm((f) => ({
+      ...f,
+      platforms: f.platforms.length > 0 ? f.platforms : (selectedProduct.platforms || []),
+      formats:   f.formats.length   > 0 ? f.formats   : (selectedProduct.formats   || []),
+    }));
   }, [selectedProduct?.id]);
 
   function update(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+  function toggle(k, v) {
+    setForm((f) => ({
+      ...f,
+      [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v],
+    }));
+  }
 
   function onFile(e) {
     const f = e.target.files?.[0];
@@ -44,6 +60,8 @@ export default function ExperimentNew() {
     if (!form.product_id) return setError('Elegí un producto');
     if (!form.name.trim()) return setError('Ingresá un nombre');
     if (!file) return setError('Subí la imagen del Champion');
+    if (form.platforms.length === 0) return setError('Elegí al menos una plataforma');
+    if (form.formats.length === 0) return setError('Elegí al menos un formato');
 
     setSubmitting(true);
     try {
@@ -53,6 +71,8 @@ export default function ExperimentNew() {
         name: form.name.trim(),
         champion_image_url: uploaded.url,
         champion_public_id: uploaded.public_id,
+        platforms: form.platforms,
+        formats:   form.formats,
       });
       navigate(`/experiments/${experiment.id}`);
     } catch (err) {
@@ -100,6 +120,32 @@ export default function ExperimentNew() {
         {preview && (
           <img src={preview} alt="preview" className="mt-3 max-h-56 rounded border border-slate-200" />
         )}
+      </Field>
+
+      <Field
+        label="Plataformas para este experimento"
+        required
+        hint={selectedProduct
+          ? "Precargado con las plataformas típicas del producto. Ajustá si en este experimento querés probar canales distintos."
+          : "Elegí primero un producto."}
+      >
+        <ChipsGroup
+          options={PLATFORM_OPTIONS}
+          selected={form.platforms}
+          onToggle={(v) => toggle('platforms', v)}
+        />
+      </Field>
+
+      <Field
+        label="Formatos para este experimento"
+        required
+        hint="El Ogilvy va a generar un creativo por cada combo (plataforma × formato) que tenga sentido."
+      >
+        <ChipsGroup
+          options={FORMAT_OPTIONS}
+          selected={form.formats}
+          onToggle={(v) => toggle('formats', v)}
+        />
       </Field>
 
       {error && <div className="text-sm text-red-600">{error}</div>}
@@ -187,5 +233,29 @@ function Field({ label, required, hint, children }) {
       {hint && <span className="block text-xs text-slate-500 mt-0.5">{hint}</span>}
       <div className="mt-1">{children}</div>
     </label>
+  );
+}
+
+function ChipsGroup({ options, selected, onToggle }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((opt) => {
+        const active = selected.includes(opt);
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onToggle(opt)}
+            className={`text-xs px-2.5 py-1 rounded-full border transition ${
+              active
+                ? 'bg-brand-600 border-brand-600 text-white'
+                : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400'
+            }`}
+          >
+            {opt}
+          </button>
+        );
+      })}
+    </div>
   );
 }

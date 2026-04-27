@@ -17,7 +17,7 @@ const productSchema = z.object({
   target_audience: z.string().min(1, 'target_audience es obligatorio'),
   key_benefit:     z.string().optional().nullable(),
   context:         z.string().optional().nullable(),
-  platforms:       z.array(z.string()).default([]),
+  platforms:       z.array(z.string()).default([]),  // sugerencia / default; el experimento define lo definitivo
   formats:         z.array(z.string()).default([]),
 });
 
