@@ -67,6 +67,11 @@ export default function Login() {
         >
           {submitting ? 'Ingresando…' : 'Ingresar'}
         </button>
+
+        <p className="text-xs text-slate-500 text-center pt-1">
+          ¿Olvidaste tu contraseña? Pedile a un administrador del equipo que la
+          resetee desde <span className="font-medium text-slate-600">Equipo</span>.
+        </p>
       </form>
     </div>
   );
