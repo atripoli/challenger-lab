@@ -1089,21 +1089,21 @@ function ResultEntryModal({ initial, isNew, experiment, onSave, onCancel }) {
 
         <div className="p-6 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <ModalField label="Challenger lanzado" required>
+            <ResultModalField label="Challenger lanzado" required>
               <select required value={form.challenger_id} onChange={(e) => update('challenger_id', e.target.value)}
                       className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
                 <option value="">— elegir —</option>
                 {challengerOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
-            </ModalField>
+            </ResultModalField>
 
-            <ModalField label="Plataforma" required>
+            <ResultModalField label="Plataforma" required>
               <select required value={form.platform} onChange={(e) => update('platform', e.target.value)}
                       className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
                 <option value="">— elegir —</option>
                 {platformOptions.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
-            </ModalField>
+            </ResultModalField>
           </div>
 
           <fieldset className="border border-slate-200 rounded-md p-4 space-y-3">
@@ -1134,20 +1134,20 @@ function ResultEntryModal({ initial, isNew, experiment, onSave, onCancel }) {
             </div>
           </fieldset>
 
-          <ModalField
+          <ResultModalField
             label="Tu evaluación de performance (0-10, opcional)"
             hint="Score subjetivo del campaign manager. Lo comparamos con el predicted_score que calculó el Scorer para medir calibración."
           >
             <input type="number" value={form.actual_performance_score ?? ''} step="0.5" min="0" max="10"
                    onChange={(e) => update('actual_performance_score', e.target.value)}
                    className="mt-1 w-32 rounded-md border border-slate-300 px-3 py-2 text-sm font-mono" />
-          </ModalField>
+          </ResultModalField>
 
-          <ModalField label="Notas">
+          <ResultModalField label="Notas">
             <textarea rows={3} value={form.notes || ''} onChange={(e) => update('notes', e.target.value)}
                       className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                       placeholder="Aprendizajes, problemas operativos, observaciones del público real, etc." />
-          </ModalField>
+          </ResultModalField>
         </div>
 
         <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
@@ -1159,7 +1159,7 @@ function ResultEntryModal({ initial, isNew, experiment, onSave, onCancel }) {
   );
 }
 
-function ModalField({ label, required, hint, children }) {
+function ResultModalField({ label, required, hint, children }) {
   return (
     <label className="block">
       <span className="text-sm font-medium text-slate-700">
