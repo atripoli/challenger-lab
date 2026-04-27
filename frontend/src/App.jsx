@@ -8,6 +8,7 @@ import Experiments from './pages/Experiments.jsx';
 import ExperimentNew from './pages/ExperimentNew.jsx';
 import ExperimentDetail from './pages/ExperimentDetail.jsx';
 import ExperimentCompare from './pages/ExperimentCompare.jsx';
+import ExperimentExport from './pages/ExperimentExport.jsx';
 import Clients from './pages/Clients.jsx';
 import ClientForm from './pages/ClientForm.jsx';
 import Products from './pages/Products.jsx';
@@ -21,6 +22,12 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+
+      {/* Vista de export: full-page sin Layout (sin nav, sin sidebar) — para imprimir/PDF */}
+      <Route
+        path="/experiments/:id/export"
+        element={<ProtectedRoute><ExperimentExport /></ProtectedRoute>}
+      />
 
       <Route
         element={
