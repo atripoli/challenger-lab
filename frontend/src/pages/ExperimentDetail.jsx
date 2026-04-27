@@ -1148,17 +1148,30 @@ function normalizeForSubmit(f) {
   return out;
 }
 
-// Reglas de longitud por canal — para flaggear variantes que se pasan.
+// Reglas de longitud por canal — basadas en best practices reales de cada
+// plataforma, no en el límite duro del API.
+// - facebook|feed: cutoff "Ver más" en ~125c, pero hasta ~200c todavía rinde
+// - instagram|feed: cutoff "Ver más" en ~125c, ideal 70-150c, hasta ~220c OK
+// - linkedin|feed: long-form storytelling (200-1500c) rinde alto; max 2000c
+// - stories: overlay visual, copy mínimo
+// - carousel/reel/video: caption corto
+// - twitter: 280c hard limit
 const COPY_LENGTH_RULES = {
-  'facebook|feed':    { ideal: [40, 80],   max: 125 },
-  'instagram|feed':   { ideal: [100, 150], max: 125 }, // cutoff "Ver más"
-  'linkedin|feed':    { ideal: [200, 400], max: 600 },
-  'facebook|stories': { ideal: [10, 50],   max: 80 },
-  'instagram|stories':{ ideal: [10, 50],   max: 80 },
-  'instagram|carousel':{ ideal: [80, 150], max: 200 },
-  'tiktok|video':     { ideal: [40, 100],  max: 150 },
-  'youtube|video':    { ideal: [60, 200],  max: 300 },
-  'twitter|feed':     { ideal: [120, 260], max: 280 },
+  'facebook|feed':      { ideal: [40, 80],    max: 200  },
+  'instagram|feed':     { ideal: [70, 150],   max: 220  },
+  'linkedin|feed':      { ideal: [200, 1200], max: 2000 },
+  'linkedin|carousel':  { ideal: [200, 800],  max: 1500 },
+  'facebook|stories':   { ideal: [10, 50],    max: 80   },
+  'instagram|stories':  { ideal: [10, 50],    max: 80   },
+  'instagram|carousel': { ideal: [80, 200],   max: 300  },
+  'instagram|reel':     { ideal: [40, 100],   max: 200  },
+  'tiktok|video':       { ideal: [40, 100],   max: 150  },
+  'tiktok|feed':        { ideal: [40, 100],   max: 150  },
+  'twitter|feed':       { ideal: [120, 260],  max: 280  },
+  'youtube|video':      { ideal: [60, 200],   max: 300  },
+  'youtube|shorts':     { ideal: [40, 100],   max: 200  },
+  'google|search':      { ideal: [50, 90],    max: 90   },
+  'google|display':     { ideal: [50, 120],   max: 200  },
 };
 
 const PLATFORM_PILL = {
