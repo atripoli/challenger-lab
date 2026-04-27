@@ -4,32 +4,89 @@ const { runSkill } = require('./skillExecutor');
 const JSON_REMINDER = 'Devolvé exclusivamente un objeto JSON válido, sin prosa adicional ni bloques markdown.';
 
 /**
- * Orquesta los 4 skills en secuencia sobre un experimento, consumiendo las
- * librerías de la DB (nudges, templates, scoring_criteria) y los campos
- * estructurados del producto.
+ * Paso 1: corre el Analyzer (skill 1) y deja el experimento en `awaiting_review`.
+ * El usuario revisa/edita ángulos y selecciona N (1-5) para continuar.
  */
-async function runExperiment(experimentId) {
+async function runAnalyzer(experimentId) {
   const ctx = await loadContext(experimentId);
   if (!ctx) throw new Error(`Experimento ${experimentId} no encontrado`);
-  if (!ctx.champion_image_url) throw new Error('Falta imagen Champion para ejecutar los skills');
+  if (!ctx.champion_image_url) throw new Error('Falta imagen Champion para ejecutar el Analyzer');
 
   try {
-    // ---------- Paso 1 · Product Insights Analyzer ----------
     await setStatus(experimentId, 'analyzing');
     const angles = await stepAnalyzeAngles(ctx);
-    await patchJsonb(experimentId, { angles });
 
-    // ---------- Paso 2 · Behavioral Science Optimizer ----------
+    await pool.query(
+      `UPDATE experiments
+          SET angles                 = $1::jsonb,
+              optimized_angles       = NULL,
+              executions             = NULL,
+              scores                 = NULL,
+              champion_score         = NULL,
+              winner_id              = NULL,
+              winner_payload         = NULL,
+              uplift_vs_champion     = NULL,
+              selected_angle_numbers = NULL,
+              status                 = 'awaiting_review',
+              error_message          = NULL,
+              updated_at             = NOW()
+        WHERE id = $2`,
+      [JSON.stringify(angles), experimentId],
+    );
+
+    return { status: 'awaiting_review', angles };
+  } catch (err) {
+    console.error(`[orchestrator/analyzer] experimento ${experimentId} falló:`, err);
+    await pool.query(
+      `UPDATE experiments SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2`,
+      [err.message?.slice(0, 2000) || 'Error desconocido', experimentId],
+    );
+    throw err;
+  }
+}
+
+/**
+ * Paso 2: corre Optimizer + Ogilvy + Scorer sobre los angle_numbers seleccionados.
+ */
+async function continueExperiment(experimentId, selectedAngleNumbers) {
+  const ctx = await loadContext(experimentId);
+  if (!ctx) throw new Error(`Experimento ${experimentId} no encontrado`);
+  if (ctx.status !== 'awaiting_review') {
+    throw new Error(`Experimento no está en awaiting_review (status=${ctx.status})`);
+  }
+
+  const allAngles = Array.isArray(ctx.angles) ? ctx.angles : [];
+  const validNumbers = new Set(allAngles.map((a) => Number(a.angle_number)));
+  const requested = (selectedAngleNumbers || []).map(Number);
+  if (!requested.length) throw new Error('Hay que seleccionar al menos un ángulo');
+  if (requested.length > 5) throw new Error('Máximo 5 ángulos seleccionados');
+  if (requested.some((n) => !validNumbers.has(n))) {
+    throw new Error('Selección incluye un angle_number inexistente');
+  }
+
+  const selected = allAngles.filter((a) => requested.includes(Number(a.angle_number)));
+
+  await pool.query(
+    `UPDATE experiments
+        SET selected_angle_numbers = $1::jsonb,
+            error_message          = NULL,
+            updated_at             = NOW()
+      WHERE id = $2`,
+    [JSON.stringify(requested), experimentId],
+  );
+
+  try {
+    // ---------- Skill 2 ----------
     await setStatus(experimentId, 'optimizing');
-    const optimized = await stepOptimizeAngles(ctx, angles);
+    const optimized = await stepOptimizeAngles(ctx, selected);
     await patchJsonb(experimentId, { optimized_angles: optimized });
 
-    // ---------- Paso 3 · Ogilvy Creative Execution ----------
+    // ---------- Skill 3 ----------
     await setStatus(experimentId, 'executing');
     const executions = await stepCreateExecutions(ctx, optimized);
     await patchJsonb(experimentId, { executions });
 
-    // ---------- Paso 4 · Performance Scorer ----------
+    // ---------- Skill 4 ----------
     await setStatus(experimentId, 'scoring');
     const { champion_score, challenger_scores, winner } = await stepScoreExecutions(ctx, executions);
 
@@ -60,7 +117,7 @@ async function runExperiment(experimentId) {
 
     return { status: 'completed', winner_id: winnerId, uplift_vs_champion: uplift };
   } catch (err) {
-    console.error(`[orchestrator] experimento ${experimentId} falló:`, err);
+    console.error(`[orchestrator/continue] experimento ${experimentId} falló:`, err);
     await pool.query(
       `UPDATE experiments SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2`,
       [err.message?.slice(0, 2000) || 'Error desconocido', experimentId],
@@ -69,7 +126,25 @@ async function runExperiment(experimentId) {
   }
 }
 
-// ---------------- pasos ----------------
+/**
+ * Reemplaza el array de ángulos. Solo permitido en `awaiting_review`.
+ * No corre ningún skill — sólo persiste edits humanos.
+ */
+async function patchAngles(experimentId, newAngles) {
+  if (!Array.isArray(newAngles)) throw new Error('angles debe ser un array');
+  const ctx = await loadContext(experimentId);
+  if (!ctx) throw new Error('Experimento no encontrado');
+  if (ctx.status !== 'awaiting_review') {
+    throw new Error(`Solo se pueden editar ángulos en awaiting_review (status=${ctx.status})`);
+  }
+  const { rows } = await pool.query(
+    `UPDATE experiments SET angles = $1::jsonb, updated_at = NOW() WHERE id = $2 RETURNING angles`,
+    [JSON.stringify(newAngles), experimentId],
+  );
+  return rows[0]?.angles ?? [];
+}
+
+// ============== pasos ==============
 
 async function stepAnalyzeAngles(ctx) {
   const userBlocks = [
@@ -100,7 +175,6 @@ async function stepAnalyzeAngles(ctx) {
   if (!Array.isArray(parsed.angles) || parsed.angles.length !== 5) {
     throw new Error(`Analyzer devolvió ${parsed.angles?.length ?? 0} ángulos (se esperaban 5)`);
   }
-  // Garantizar angle_number secuencial si el modelo lo omite.
   parsed.angles = parsed.angles.map((a, i) => ({ angle_number: a.angle_number ?? i + 1, ...a }));
   return parsed.angles;
 }
@@ -194,12 +268,8 @@ async function stepScoreExecutions(ctx, executions) {
   if (!Array.isArray(challenger_scores)) {
     throw new Error('Scorer no devolvió `challenger_scores` como array');
   }
-  if (!parsed.champion_score) {
-    throw new Error('Scorer no devolvió `champion_score`');
-  }
-  if (!parsed.winner) {
-    throw new Error('Scorer no devolvió `winner`');
-  }
+  if (!parsed.champion_score) throw new Error('Scorer no devolvió `champion_score`');
+  if (!parsed.winner) throw new Error('Scorer no devolvió `winner`');
 
   return {
     champion_score: parsed.champion_score,
@@ -208,12 +278,12 @@ async function stepScoreExecutions(ctx, executions) {
   };
 }
 
-// ---------------- db helpers ----------------
+// ============== db helpers ==============
 
 async function loadContext(id) {
   const { rows } = await pool.query(
     `SELECT e.id, e.name, e.status, e.champion_image_url, e.historical_data,
-            e.brief_snapshot AS legacy_brief,
+            e.brief_snapshot AS legacy_brief, e.angles, e.selected_angle_numbers,
             p.brief_text, p.target_audience, p.key_benefit, p.context, p.platforms, p.formats
        FROM experiments e
        JOIN products p ON p.id = e.product_id
@@ -222,7 +292,6 @@ async function loadContext(id) {
   );
   if (!rows.length) return null;
   const r = rows[0];
-  // Compatibilidad: si brief_text está vacío pero existe legacy_brief, usamos ése.
   if (!r.brief_text && r.legacy_brief) r.brief_text = r.legacy_brief;
   return r;
 }
@@ -273,4 +342,10 @@ async function loadScoringCriteria() {
   return rows;
 }
 
-module.exports = { runExperiment };
+module.exports = {
+  runAnalyzer,
+  continueExperiment,
+  patchAngles,
+  // alias para retro-compat: el endpoint /run ahora corre solo el analyzer
+  runExperiment: runAnalyzer,
+};

@@ -7,6 +7,7 @@ const navItems = [
   { to: '/clients',      label: 'Clientes',    roles: ['admin','analyst'] },
   { to: '/products',     label: 'Productos',   roles: ['admin','analyst'] },
   { to: '/skill-prompts',label: 'Skills',      roles: ['admin'] },
+  { to: '/team',         label: 'Equipo',      roles: ['admin'] },
 ];
 
 export default function Layout() {

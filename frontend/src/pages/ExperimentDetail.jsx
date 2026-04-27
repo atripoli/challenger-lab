@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { STATUS_META, RUNNING_STATUSES, STEP_ORDER, STEP_LABELS } from '../lib/status.js';
@@ -6,11 +6,11 @@ import { STATUS_META, RUNNING_STATUSES, STEP_ORDER, STEP_LABELS } from '../lib/s
 const POLL_INTERVAL_MS = 3500;
 
 const CATEGORY_COLOR = {
-  FUNCTIONAL_BENEFIT:  'bg-sky-100 text-sky-700',
-  ECONOMIC_OPPORTUNITY:'bg-emerald-100 text-emerald-700',
-  SOCIAL_STATUS:       'bg-violet-100 text-violet-700',
-  EMOTIONAL_IDENTITY:  'bg-rose-100 text-rose-700',
-  CULTURAL_TIMING:     'bg-amber-100 text-amber-700',
+  FUNCTIONAL_BENEFIT:   'bg-sky-100 text-sky-700',
+  ECONOMIC_OPPORTUNITY: 'bg-emerald-100 text-emerald-700',
+  SOCIAL_STATUS:        'bg-violet-100 text-violet-700',
+  EMOTIONAL_IDENTITY:   'bg-rose-100 text-rose-700',
+  CULTURAL_TIMING:      'bg-amber-100 text-amber-700',
 };
 
 export default function ExperimentDetail() {
@@ -63,6 +63,7 @@ export default function ExperimentDetail() {
 
   const meta = STATUS_META[exp.status] || STATUS_META.draft;
   const isRunning = RUNNING_STATUSES.has(exp.status);
+  const isAwaitingReview = exp.status === 'awaiting_review';
 
   return (
     <div className="space-y-6">
@@ -74,13 +75,13 @@ export default function ExperimentDetail() {
         </div>
         <div className="flex items-center gap-3">
           <span className={`inline-flex px-2.5 py-1 rounded-full text-xs ${meta.className}`}>{meta.label}</span>
-          {!isRunning && exp.status !== 'completed' && (
+          {!isRunning && exp.status !== 'completed' && !isAwaitingReview && (
             <button
               onClick={run}
               disabled={running || !exp.champion_image_url}
               className="rounded-md bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 text-sm disabled:opacity-50"
             >
-              {exp.status === 'failed' ? 'Reintentar' : 'Ejecutar skills'}
+              {exp.status === 'failed' ? 'Reintentar' : 'Generar 5 ángulos'}
             </button>
           )}
           {exp.status === 'completed' && (
@@ -89,7 +90,7 @@ export default function ExperimentDetail() {
               disabled={running}
               className="rounded-md border border-slate-300 text-slate-700 px-4 py-2 text-sm"
             >
-              Re-generar
+              Re-generar ángulos
             </button>
           )}
         </div>
@@ -110,6 +111,15 @@ export default function ExperimentDetail() {
         <WinnerBanner winner={exp.winner_payload} uplift={exp.uplift_vs_champion} champion={exp.champion_score} />
       )}
 
+      {isAwaitingReview && exp.angles && (
+        <ReviewPanel
+          experimentId={exp.id}
+          angles={exp.angles}
+          onUpdated={load}
+          onError={setError}
+        />
+      )}
+
       <section className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-6">
         <div className="space-y-3">
           <h2 className="text-sm font-medium text-slate-700">Champion</h2>
@@ -122,9 +132,7 @@ export default function ExperimentDetail() {
         </div>
 
         <div className="space-y-6">
-          <Section title="Brief" body={exp.brief_snapshot} />
-
-          {exp.angles            && <AnglesBlock      angles={exp.angles} />}
+          {!isAwaitingReview && exp.angles && <AnglesBlock angles={exp.angles} selected={exp.selected_angle_numbers} />}
           {exp.optimized_angles  && <OptimizedBlock   items={exp.optimized_angles} />}
           {exp.executions        && <ExecutionsBlock  executions={exp.executions} winnerId={exp.winner_id} />}
           {exp.scores            && <ScoresBlock      scores={exp.scores} winnerId={exp.winner_id} champion={exp.champion_score} />}
@@ -134,35 +142,259 @@ export default function ExperimentDetail() {
   );
 }
 
-// ---------------- sub-components ----------------
+// ---------------- review mode ----------------
 
-function Section({ title, body }) {
-  if (!body) return null;
+function ReviewPanel({ experimentId, angles, onUpdated, onError }) {
+  const [selected, setSelected] = useState(new Set());
+  const [editing, setEditing] = useState(null); // angle being edited
+  const [continuing, setContinuing] = useState(false);
+
+  const sortedAngles = useMemo(
+    () => [...angles].sort((a, b) => (a.angle_number || 0) - (b.angle_number || 0)),
+    [angles],
+  );
+
+  function toggle(num) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(num)) next.delete(num);
+      else next.add(num);
+      return next;
+    });
+  }
+
+  async function saveEdit(updatedAngle) {
+    onError(null);
+    const patched = sortedAngles.map((a) =>
+      a.angle_number === updatedAngle.angle_number ? { ...a, ...updatedAngle } : a,
+    );
+    try {
+      await api.patch(`/api/experiments/${experimentId}/angles`, { angles: patched });
+      setEditing(null);
+      onUpdated();
+    } catch (err) {
+      onError(err.message);
+    }
+  }
+
+  async function continueWithSelected() {
+    if (selected.size === 0) return;
+    onError(null);
+    setContinuing(true);
+    try {
+      await api.post(`/api/experiments/${experimentId}/continue`, {
+        selected_angle_numbers: Array.from(selected).sort((a, b) => a - b),
+      });
+      onUpdated();
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setContinuing(false);
+    }
+  }
+
   return (
-    <div>
-      <h3 className="text-sm font-medium text-slate-700 mb-1">{title}</h3>
-      <div className="bg-white border border-slate-200 rounded-md p-4 text-sm text-slate-700 whitespace-pre-wrap">{body}</div>
+    <>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-amber-900">Revisá los 5 ángulos antes de continuar</h3>
+            <p className="text-sm text-amber-800 mt-0.5">
+              Editá los que quieras refinar y seleccioná {' '}
+              <b>1 a 5</b> para continuar el pipeline (Optimizer → Ogilvy → Scorer).
+              Sólo se procesarán los seleccionados — los demás se descartan.
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-amber-700">Seleccionados</div>
+            <div className="text-2xl font-bold text-amber-900">{selected.size}</div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {sortedAngles.map((a) => (
+            <CompactAngleCard
+              key={a.angle_number}
+              angle={a}
+              selected={selected.has(a.angle_number)}
+              onToggle={() => toggle(a.angle_number)}
+              onEdit={() => setEditing(a)}
+            />
+          ))}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2 border-t border-amber-200">
+          <button
+            onClick={continueWithSelected}
+            disabled={selected.size === 0 || continuing}
+            className="rounded-md bg-amber-600 hover:bg-amber-700 text-white px-5 py-2 text-sm font-medium disabled:opacity-50"
+          >
+            {continuing
+              ? 'Continuando…'
+              : selected.size === 0
+                ? 'Seleccioná al menos 1 ángulo'
+                : `Continuar con ${selected.size} ángulo${selected.size > 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+
+      {editing && (
+        <AngleEditModal
+          angle={editing}
+          onSave={saveEdit}
+          onCancel={() => setEditing(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function CompactAngleCard({ angle, selected, onToggle, onEdit }) {
+  const [expanded, setExpanded] = useState(false);
+  const cls = CATEGORY_COLOR[angle.category] || 'bg-slate-100 text-slate-600';
+  return (
+    <div className={`bg-white border rounded-md p-3 transition ${selected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-slate-200'}`}>
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          className="w-4 h-4 accent-amber-600"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-400 font-mono">#{angle.angle_number}</span>
+            <span className="font-medium text-slate-900 truncate">{angle.angle_name || '(sin nombre)'}</span>
+            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${cls}`}>
+              {(angle.category || '').replace(/_/g, ' ')}
+            </span>
+          </div>
+          {angle.insight && !expanded && (
+            <div className="text-xs text-slate-500 mt-1 line-clamp-1">{angle.insight}</div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-xs text-slate-500 hover:text-slate-800"
+          >
+            {expanded ? 'Ocultar' : 'Ver'}
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-xs text-brand-600 hover:underline"
+          >
+            Editar
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 pl-7 space-y-1 text-sm">
+          {angle.insight && <div className="text-slate-700"><b className="text-slate-500">Insight:</b> {angle.insight}</div>}
+          {angle.benefit && <div className="text-slate-700"><b className="text-slate-500">Beneficio:</b> {angle.benefit}</div>}
+          {angle.evidence && <div className="text-slate-600 italic"><b className="text-slate-500 not-italic">Evidencia:</b> {angle.evidence}</div>}
+          {angle.target_emotion && <div className="text-xs text-slate-500"><b>Emoción:</b> {angle.target_emotion}</div>}
+        </div>
+      )}
     </div>
   );
 }
 
+function AngleEditModal({ angle, onSave, onCancel }) {
+  const [draft, setDraft] = useState({
+    angle_name:     angle.angle_name || '',
+    category:       angle.category || '',
+    insight:        angle.insight || '',
+    benefit:        angle.benefit || '',
+    evidence:       angle.evidence || '',
+    target_emotion: angle.target_emotion || '',
+  });
+
+  function update(k, v) { setDraft((d) => ({ ...d, [k]: v })); }
+
+  function submit(e) {
+    e.preventDefault();
+    onSave({ angle_number: angle.angle_number, ...draft });
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <form onSubmit={submit} className="bg-white rounded-lg w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Editar ángulo #{angle.angle_number}
+          </h2>
+          <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-700 text-xl leading-none">
+            ×
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <ModalField label="Nombre del ángulo" value={draft.angle_name} onChange={(v) => update('angle_name', v)} />
+          <ModalField label="Categoría" value={draft.category} onChange={(v) => update('category', v)} as="select" options={Object.keys(CATEGORY_COLOR)} />
+          <ModalField label="Insight" value={draft.insight} onChange={(v) => update('insight', v)} as="textarea" rows={3} />
+          <ModalField label="Beneficio" value={draft.benefit} onChange={(v) => update('benefit', v)} as="textarea" rows={2} />
+          <ModalField label="Evidencia" value={draft.evidence} onChange={(v) => update('evidence', v)} as="textarea" rows={2} />
+          <ModalField label="Emoción objetivo" value={draft.target_emotion} onChange={(v) => update('target_emotion', v)} />
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700">
+            Cancelar
+          </button>
+          <button type="submit" className="rounded-md bg-brand-600 hover:bg-brand-700 text-white px-5 py-2 text-sm">
+            Guardar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ModalField({ label, value, onChange, as = 'input', rows, options }) {
+  const cls = 'mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      {as === 'textarea' ? (
+        <textarea rows={rows || 3} value={value} onChange={(e) => onChange(e.target.value)} className={cls} />
+      ) : as === 'select' ? (
+        <select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
+          <option value="">— sin categoría —</option>
+          {(options || []).map((o) => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
+        </select>
+      ) : (
+        <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className={cls} />
+      )}
+    </label>
+  );
+}
+
+// ---------------- read-only blocks ----------------
+
 function StepTimeline({ status }) {
   const currentIdx = STEP_ORDER.indexOf(status);
+  const entries = Object.entries(STEP_LABELS);
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4">
-      <div className="flex items-center gap-3 text-xs">
-        {Object.entries(STEP_LABELS).map(([key, label], i) => {
+      <div className="flex items-center gap-2 text-xs flex-wrap">
+        {entries.map(([key, label], i) => {
           const idx = STEP_ORDER.indexOf(key);
           const active = idx === currentIdx;
           const done = currentIdx > idx || status === 'completed';
+          const isReview = key === 'awaiting_review';
+          const cls = active
+            ? (isReview ? 'bg-amber-500 text-white border-amber-500' : 'bg-brand-500 text-white border-brand-500')
+            : done
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : 'bg-slate-50 text-slate-500 border-slate-200';
           return (
-            <div key={key} className="flex items-center gap-3">
-              <div className={`px-2.5 py-1 rounded-full border ${
-                active ? 'bg-brand-500 text-white border-brand-500' :
-                done  ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                        'bg-slate-50 text-slate-500 border-slate-200'
-              }`}>{label}</div>
-              {i < 3 && <div className="w-6 h-px bg-slate-200" />}
+            <div key={key} className="flex items-center gap-2">
+              <div className={`px-2.5 py-1 rounded-full border ${cls}`}>{label}</div>
+              {i < entries.length - 1 && <div className="w-4 h-px bg-slate-200" />}
             </div>
           );
         })}
@@ -220,7 +452,8 @@ function CategoryBadge({ category }) {
   );
 }
 
-function AnglesBlock({ angles }) {
+function AnglesBlock({ angles, selected }) {
+  const selSet = new Set(Array.isArray(selected) ? selected : []);
   return (
     <div>
       <h3 className="text-sm font-medium text-slate-700 mb-2">1 · Ángulos estratégicos</h3>
@@ -228,12 +461,14 @@ function AnglesBlock({ angles }) {
         {angles.map((a) => {
           const num = a.angle_number ?? a.id;
           const name = a.angle_name || a.name || a.nombre || `Ángulo ${num}`;
+          const isPicked = selSet.has(Number(num));
           return (
-            <div key={num} className="bg-white border border-slate-200 rounded-md p-4">
+            <div key={num} className={`bg-white border rounded-md p-4 ${isPicked ? 'border-emerald-300' : 'border-slate-200 opacity-70'}`}>
               <div className="flex items-baseline justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-400">#{num}</span>
                   <div className="font-medium text-slate-900">{name}</div>
+                  {isPicked && <span className="text-[10px] bg-emerald-600 text-white rounded px-1.5 py-0.5">SELECCIONADO</span>}
                 </div>
                 <CategoryBadge category={a.category} />
               </div>
@@ -403,7 +638,6 @@ function ScoresBlock({ scores, winnerId, champion }) {
   );
 }
 
-// Extrae `.score` si es un objeto, o devuelve el valor directo.
 function val(v) {
   if (v == null) return null;
   if (typeof v === 'object') return v.score ?? null;

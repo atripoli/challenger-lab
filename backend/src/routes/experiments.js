@@ -4,7 +4,7 @@ const { z } = require('zod');
 const { pool } = require('../config/db');
 const asyncHandler = require('../middleware/asyncHandler');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { runExperiment } = require('../services/orchestrator');
+const { runAnalyzer, continueExperiment, patchAngles } = require('../services/orchestrator');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -123,7 +123,8 @@ router.patch(
   }),
 );
 
-// POST /api/experiments/:id/run — dispara la orquestación async.
+// POST /api/experiments/:id/run — dispara skill 1 (Analyzer) y deja el experimento
+// en `awaiting_review`. Los skills 2-4 se gatillan después con /:id/continue.
 router.post(
   '/:id/run',
   requireRole('admin', 'analyst'),
@@ -148,12 +149,68 @@ router.post(
       [exp.id],
     );
 
-    // Fire-and-forget: el frontend hace polling sobre GET /:id
-    runExperiment(exp.id).catch((err) => {
-      console.error('[experiments] orchestrator error', exp.id, err.message);
+    // Fire-and-forget — el frontend hace polling sobre GET /:id.
+    runAnalyzer(exp.id).catch((err) => {
+      console.error('[experiments] analyzer error', exp.id, err.message);
     });
 
-    res.status(202).json({ accepted: true, experiment_id: exp.id });
+    res.status(202).json({ accepted: true, experiment_id: exp.id, next: 'awaiting_review' });
+  }),
+);
+
+const anglesPatchSchema = z.object({
+  angles: z.array(z.object({ angle_number: z.number().int().positive() }).passthrough()).min(1).max(5),
+});
+
+// PATCH /api/experiments/:id/angles — guarda edits humanos sobre los 5 ángulos.
+router.patch(
+  '/:id/angles',
+  requireRole('admin', 'analyst'),
+  asyncHandler(async (req, res) => {
+    const data = anglesPatchSchema.parse(req.body);
+    try {
+      const updated = await patchAngles(Number(req.params.id), data.angles);
+      res.json({ angles: updated });
+    } catch (err) {
+      const status = /no encontrado/.test(err.message) ? 404
+        : /awaiting_review/.test(err.message) ? 409
+        : 400;
+      res.status(status).json({ error: err.message });
+    }
+  }),
+);
+
+const continueSchema = z.object({
+  selected_angle_numbers: z.array(z.number().int().positive()).min(1).max(5),
+});
+
+// POST /api/experiments/:id/continue — dispara skills 2-4 sobre los ángulos seleccionados.
+router.post(
+  '/:id/continue',
+  requireRole('admin', 'analyst'),
+  asyncHandler(async (req, res) => {
+    const data = continueSchema.parse(req.body);
+    const { rows } = await pool.query(
+      `SELECT id, status FROM experiments WHERE id = $1 AND deleted_at IS NULL`,
+      [req.params.id],
+    );
+    const exp = rows[0];
+    if (!exp) return res.status(404).json({ error: 'Experimento no encontrado' });
+    if (exp.status !== 'awaiting_review') {
+      return res.status(409).json({
+        error: `Experimento no está en awaiting_review (status=${exp.status})`,
+      });
+    }
+
+    continueExperiment(exp.id, data.selected_angle_numbers).catch((err) => {
+      console.error('[experiments] continue error', exp.id, err.message);
+    });
+
+    res.status(202).json({
+      accepted: true,
+      experiment_id: exp.id,
+      selected_angle_numbers: data.selected_angle_numbers,
+    });
   }),
 );
 

@@ -11,6 +11,8 @@ import Clients from './pages/Clients.jsx';
 import ClientForm from './pages/ClientForm.jsx';
 import Products from './pages/Products.jsx';
 import ProductForm from './pages/ProductForm.jsx';
+import Team from './pages/Team.jsx';
+import TeamForm from './pages/TeamForm.jsx';
 import Placeholder from './pages/Placeholder.jsx';
 
 export default function App() {
@@ -42,6 +44,18 @@ export default function App() {
               <SkillPrompts />
             </ProtectedRoute>
           }
+        />
+        <Route
+          path="team"
+          element={<ProtectedRoute roles={['admin']}><Team /></ProtectedRoute>}
+        />
+        <Route
+          path="team/new"
+          element={<ProtectedRoute roles={['admin']}><TeamForm /></ProtectedRoute>}
+        />
+        <Route
+          path="team/:id/edit"
+          element={<ProtectedRoute roles={['admin']}><TeamForm /></ProtectedRoute>}
         />
       </Route>
     </Routes>
