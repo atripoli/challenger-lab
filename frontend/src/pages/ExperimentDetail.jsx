@@ -551,7 +551,12 @@ function ExecutionsBlock({ executions, winnerId }) {
               {ex.big_idea && <div className="mt-2 text-sm italic text-slate-700">{ex.big_idea}</div>}
               {ex.headline && <div className="mt-2 text-base font-semibold text-slate-900">{ex.headline}</div>}
               {ex.subheadline && <div className="text-sm text-slate-600">{ex.subheadline}</div>}
-              {ex.body_copy && <div className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{ex.body_copy}</div>}
+
+              {Array.isArray(ex.copy_variants) && ex.copy_variants.length > 0
+                ? <CopyVariants variants={ex.copy_variants} />
+                : ex.body_copy
+                  ? <div className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{ex.body_copy}</div>
+                  : null}
 
               {(visual.main_visual || visual.background || visual.person || visual.colors) && (
                 <div className="mt-3 text-xs text-slate-500 border-t border-slate-100 pt-2 space-y-0.5">
@@ -642,4 +647,73 @@ function val(v) {
   if (v == null) return null;
   if (typeof v === 'object') return v.score ?? null;
   return v;
+}
+
+// Reglas de longitud por canal — para flaggear variantes que se pasan.
+const COPY_LENGTH_RULES = {
+  'facebook|feed':    { ideal: [40, 80],   max: 125 },
+  'instagram|feed':   { ideal: [100, 150], max: 125 }, // cutoff "Ver más"
+  'linkedin|feed':    { ideal: [200, 400], max: 600 },
+  'facebook|stories': { ideal: [10, 50],   max: 80 },
+  'instagram|stories':{ ideal: [10, 50],   max: 80 },
+  'instagram|carousel':{ ideal: [80, 150], max: 200 },
+  'tiktok|video':     { ideal: [40, 100],  max: 150 },
+  'youtube|video':    { ideal: [60, 200],  max: 300 },
+  'twitter|feed':     { ideal: [120, 260], max: 280 },
+};
+
+const PLATFORM_PILL = {
+  facebook:  'bg-blue-100 text-blue-700',
+  instagram: 'bg-pink-100 text-pink-700',
+  linkedin:  'bg-sky-100 text-sky-700',
+  tiktok:    'bg-fuchsia-100 text-fuchsia-700',
+  youtube:   'bg-red-100 text-red-700',
+  twitter:   'bg-slate-200 text-slate-700',
+  google:    'bg-emerald-100 text-emerald-700',
+};
+
+function CopyVariants({ variants }) {
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="text-[10px] uppercase tracking-wide text-slate-400">Body copy por canal</div>
+      {variants.map((v, i) => {
+        const platformKey = String(v.platform || '').toLowerCase();
+        const formatKey = String(v.format || '').toLowerCase();
+        const ruleKey = `${platformKey}|${formatKey}`;
+        const rule = COPY_LENGTH_RULES[ruleKey];
+        const len = v.char_count ?? (v.body || '').length;
+        const status = rule
+          ? len > rule.max
+            ? { color: 'text-red-600', label: 'fuera de rango' }
+            : len < rule.ideal[0]
+              ? { color: 'text-amber-600', label: 'corto' }
+              : len > rule.ideal[1]
+                ? { color: 'text-amber-600', label: 'largo' }
+                : { color: 'text-emerald-600', label: 'óptimo' }
+          : null;
+        const pillCls = PLATFORM_PILL[platformKey] || 'bg-slate-100 text-slate-700';
+        return (
+          <div key={i} className="bg-slate-50 border border-slate-200 rounded p-2.5 text-sm">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${pillCls}`}>
+                  {v.platform}
+                </span>
+                {v.format && (
+                  <span className="text-[10px] text-slate-500">{v.format}</span>
+                )}
+              </div>
+              <div className="text-[10px] font-mono text-slate-500">
+                {len} chars
+                {status && (
+                  <span className={`ml-1.5 ${status.color}`}>· {status.label}</span>
+                )}
+              </div>
+            </div>
+            <div className="text-slate-700 whitespace-pre-wrap">{v.body}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
