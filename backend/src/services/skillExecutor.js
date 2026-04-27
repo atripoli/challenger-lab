@@ -22,6 +22,17 @@ async function runSkill(skillName, userContent, opts = {}) {
   const systemBlocks = [
     { type: 'text', text: conf.system_prompt, cache_control: { type: 'ephemeral' } },
   ];
+  // Bloques estáticos grandes (librerías) cacheados con prefix caching de
+  // Anthropic. Como van DESPUÉS del system prompt (que también es estático),
+  // todo el prefijo queda cacheado y la 2da corrida en adelante paga 10% del
+  // costo de tokens cacheados y se procesa mucho más rápido.
+  if (Array.isArray(opts.cachedSystemBlocks)) {
+    for (const block of opts.cachedSystemBlocks) {
+      if (block && String(block).trim()) {
+        systemBlocks.push({ type: 'text', text: String(block), cache_control: { type: 'ephemeral' } });
+      }
+    }
+  }
   if (extraSystem) systemBlocks.push({ type: 'text', text: extraSystem });
 
   const userContentBlocks = Array.isArray(userContent)

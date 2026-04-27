@@ -212,14 +212,17 @@ async function stepOptimizeAngles(ctx, angles) {
         `- target_audience: ${ctx.target_audience || '(sin target)'}`,
         `- context: ${ctx.context || '(sin contexto)'}`,
         '',
-        '## nudges_library (usar exclusivamente estos nudge_id)',
-        JSON.stringify(nudges),
-        '',
         JSON_REMINDER,
       ].join('\n'),
     },
   ];
-  const { parsed } = await runSkill('behavioral_science_optimizer', userBlocks);
+  // La nudges_library va en system (cacheada). Cambia muy poco entre corridas,
+  // así que después de la 1ra del día el modelo la lee desde cache.
+  const cachedSystemBlocks = [
+    `## nudges_library (usar exclusivamente estos nudge_id; ${nudges.length} nudges disponibles)\n${JSON.stringify(nudges)}`,
+  ];
+
+  const { parsed } = await runSkill('behavioral_science_optimizer', userBlocks, { cachedSystemBlocks });
   if (!Array.isArray(parsed.optimized_angles)) {
     throw new Error('Optimizer no devolvió `optimized_angles` como array');
   }
@@ -240,9 +243,6 @@ async function stepCreateExecutions(ctx, optimizedAngles) {
         '## Ángulos optimizados (input)',
         JSON.stringify({ optimized_angles: optimizedAngles }, null, 2),
         '',
-        '## templates_library',
-        JSON.stringify(templates),
-        '',
         '## channels (CANALES SELECCIONADOS — generar EXACTAMENTE uno por entrada)',
         JSON.stringify(channels),
         '',
@@ -255,7 +255,11 @@ async function stepCreateExecutions(ctx, optimizedAngles) {
       ].join('\n'),
     },
   ];
-  const { parsed } = await runSkill('ogilvy_creative_execution', userBlocks);
+  // templates_library en system (estática entre corridas).
+  const cachedSystemBlocks = [
+    `## templates_library\n${JSON.stringify(templates)}`,
+  ];
+  const { parsed } = await runSkill('ogilvy_creative_execution', userBlocks, { cachedSystemBlocks });
   if (!Array.isArray(parsed.executions)) {
     throw new Error('Ogilvy skill no devolvió `executions` como array');
   }
@@ -291,9 +295,6 @@ async function stepScoreExecutions(ctx, executions) {
         '## Ejecuciones challenger a evaluar',
         JSON.stringify({ executions }, null, 2),
         '',
-        '## scoring_criteria (pesos ya suman 1.00)',
-        JSON.stringify(criteria),
-        '',
         '## Plataformas a predecir',
         JSON.stringify(ctx.platforms || []),
         '',
@@ -307,7 +308,11 @@ async function stepScoreExecutions(ctx, executions) {
       ].join('\n'),
     },
   ];
-  const { parsed } = await runSkill('performance_scorer', userBlocks);
+  // scoring_criteria en system (estática).
+  const cachedSystemBlocks = [
+    `## scoring_criteria (pesos ya suman 1.00)\n${JSON.stringify(criteria)}`,
+  ];
+  const { parsed } = await runSkill('performance_scorer', userBlocks, { cachedSystemBlocks });
 
   const challenger_scores = parsed.challenger_scores ?? parsed.scores;
   if (!Array.isArray(challenger_scores)) {
@@ -455,10 +460,16 @@ async function loadPreviousAngles(productId, currentExperimentId, limit = 30) {
   return out;
 }
 
+// Versión trimmeada de la librería: solo los 6 campos esenciales para selección.
+// Se dropean subcategory, best_for, avoid_when y ethical_consideration porque:
+// - subcategory: redundante con category para selección
+// - best_for: el modelo lo deduce de description
+// - avoid_when: cubierto por las reglas éticas generales del system prompt
+// - ethical_consideration: idem (system prompt tiene la guía ética genérica)
+// Resultado: ~50% menos de tokens para skill 2 sin pérdida de capacidad de selección.
 async function loadNudgesLibrary() {
   const { rows } = await pool.query(
-    `SELECT nudge_id, nudge_name, category, subcategory, description,
-            best_for, avoid_when, combines_well_with, intensity, ethical_consideration
+    `SELECT nudge_id, nudge_name, category, description, combines_well_with, intensity
        FROM behavioral_nudges
       WHERE is_active
       ORDER BY category, nudge_id`,
