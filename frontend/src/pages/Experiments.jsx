@@ -2,16 +2,33 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { STATUS_META } from '../lib/status.js';
+import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Experiments() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    api.get('/api/experiments')
-      .then((d) => setItems(d.experiments))
-      .finally(() => setLoading(false));
-  }, []);
+  async function load() {
+    setLoading(true);
+    try {
+      const d = await api.get('/api/experiments');
+      setItems(d.experiments);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleDelete(exp) {
+    if (!confirm(`¿Eliminar el experimento "${exp.name}"? Soft-delete: la fila desaparece pero los datos quedan en DB.`)) return;
+    try {
+      await api.del(`/api/experiments/${exp.id}`);
+      await load();
+    } catch (err) { setError(err.message); }
+  }
 
   return (
     <div className="space-y-6">
@@ -41,6 +58,7 @@ export default function Experiments() {
                 <th className="px-4 py-2 text-left font-medium">Estado</th>
                 <th className="px-4 py-2 text-left font-medium">Ganador</th>
                 <th className="px-4 py-2 text-right font-medium">Actualizado</th>
+                {isAdmin && <th className="px-4 py-2 text-right font-medium w-20"></th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -63,6 +81,16 @@ export default function Experiments() {
                     <td className="px-4 py-3 text-right text-slate-500 text-xs">
                       {new Date(e.updated_at).toLocaleString('es-AR')}
                     </td>
+                    {isAdmin && (
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => handleDelete(e)}
+                          className="text-sm text-red-600 hover:underline"
+                        >
+                          Eliminar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -70,6 +98,8 @@ export default function Experiments() {
           </table>
         </div>
       )}
+
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md p-3">{error}</div>}
     </div>
   );
 }

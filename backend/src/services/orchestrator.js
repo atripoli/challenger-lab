@@ -284,6 +284,7 @@ async function loadContext(id) {
   const { rows } = await pool.query(
     `SELECT e.id, e.name, e.status, e.champion_image_url, e.historical_data,
             e.brief_snapshot AS legacy_brief, e.angles, e.selected_angle_numbers,
+            e.product_id,
             p.brief_text, p.target_audience, p.key_benefit, p.context, p.platforms, p.formats
        FROM experiments e
        JOIN products p ON p.id = e.product_id
@@ -293,6 +294,30 @@ async function loadContext(id) {
   if (!rows.length) return null;
   const r = rows[0];
   if (!r.brief_text && r.legacy_brief) r.brief_text = r.legacy_brief;
+
+  // Carga el histórico de campañas previas del producto.
+  // Combina con el legacy `historical_data` del experimento (para experimentos
+  // viejos creados antes de la tabla product_history).
+  const { rows: histRows } = await pool.query(
+    `SELECT campaign_name, period_start, period_end, platform,
+            impressions, clicks, ctr, conversions, conversion_rate,
+            cpc, cpa, budget_spent, currency, notes
+       FROM product_history
+      WHERE product_id = $1
+      ORDER BY COALESCE(period_start, recorded_at::date) DESC
+      LIMIT 50`,
+    [r.product_id],
+  );
+  const productHist = histRows.length ? histRows : null;
+  const legacyHist = r.historical_data;
+
+  if (productHist && legacyHist) {
+    r.historical_data = { product_history: productHist, experiment_legacy: legacyHist };
+  } else if (productHist) {
+    r.historical_data = { product_history: productHist };
+  }
+  // Si solo hay legacy, queda como estaba.
+
   return r;
 }
 

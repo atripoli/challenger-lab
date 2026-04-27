@@ -8,7 +8,10 @@ const { invalidate: invalidatePromptCache } = require('../services/skillPromptLo
 const { ALLOWED_MODELS } = require('../config/anthropic');
 
 const router = express.Router();
+// Skills es admin-only: el contenido de los prompts es know-how interno y no
+// debe ser accesible por analysts ni viewers, ni siquiera de lectura.
 router.use(requireAuth);
+router.use(requireRole('admin'));
 
 const updateSchema = z.object({
   system_prompt: z.string().min(20),

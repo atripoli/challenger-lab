@@ -5,11 +5,12 @@ import { api } from '../api/client.js';
 export default function ExperimentNew() {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
-  const [form, setForm] = useState({ product_id: '', name: '', historical_json: '' });
+  const [form, setForm] = useState({ product_id: '', name: '' });
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [historyCount, setHistoryCount] = useState(null);
 
   useEffect(() => {
     api.get('/api/products').then((d) => setProducts(d.products));
@@ -19,6 +20,15 @@ export default function ExperimentNew() {
     () => products.find((p) => String(p.id) === String(form.product_id)) || null,
     [products, form.product_id],
   );
+
+  // Cuando cambia el producto seleccionado, traemos cuántas campañas de
+  // histórico tiene cargadas (para mostrarle al usuario en el panel de contexto).
+  useEffect(() => {
+    if (!selectedProduct) { setHistoryCount(null); return; }
+    api.get(`/api/products/${selectedProduct.id}/history`)
+      .then((d) => setHistoryCount(d.history.length))
+      .catch(() => setHistoryCount(null));
+  }, [selectedProduct?.id]);
 
   function update(k, v) { setForm((f) => ({ ...f, [k]: v })); }
 
@@ -35,12 +45,6 @@ export default function ExperimentNew() {
     if (!form.name.trim()) return setError('Ingresá un nombre');
     if (!file) return setError('Subí la imagen del Champion');
 
-    let historical = null;
-    if (form.historical_json.trim()) {
-      try { historical = JSON.parse(form.historical_json); }
-      catch { return setError('El histórico no es JSON válido'); }
-    }
-
     setSubmitting(true);
     try {
       const uploaded = await api.upload('/api/uploads/champion', file);
@@ -49,7 +53,6 @@ export default function ExperimentNew() {
         name: form.name.trim(),
         champion_image_url: uploaded.url,
         champion_public_id: uploaded.public_id,
-        historical_data: historical,
       });
       navigate(`/experiments/${experiment.id}`);
     } catch (err) {
@@ -80,7 +83,7 @@ export default function ExperimentNew() {
         </select>
       </Field>
 
-      {selectedProduct && <ProductBriefPanel product={selectedProduct} />}
+      {selectedProduct && <ProductBriefPanel product={selectedProduct} historyCount={historyCount} />}
 
       <Field label="Nombre del experimento" required>
         <input
@@ -97,19 +100,6 @@ export default function ExperimentNew() {
         {preview && (
           <img src={preview} alt="preview" className="mt-3 max-h-56 rounded border border-slate-200" />
         )}
-      </Field>
-
-      <Field
-        label="Histórico (JSON opcional)"
-        hint="Métricas de campañas previas — se pasan al Analyzer y al Scorer como contexto. Solo aplica a este experimento."
-      >
-        <textarea
-          rows={5}
-          value={form.historical_json}
-          onChange={(e) => update('historical_json', e.target.value)}
-          className="w-full font-mono text-xs rounded-md border border-slate-300 px-3 py-2"
-          placeholder='[{"campaign":"Q1-A","ctr":0.023,"cvr":0.011}]'
-        />
       </Field>
 
       {error && <div className="text-sm text-red-600">{error}</div>}
@@ -134,7 +124,7 @@ export default function ExperimentNew() {
   );
 }
 
-function ProductBriefPanel({ product }) {
+function ProductBriefPanel({ product, historyCount }) {
   const missing = [];
   if (!product.brief_text)      missing.push('brief_text');
   if (!product.target_audience) missing.push('target_audience');
@@ -143,12 +133,14 @@ function ProductBriefPanel({ product }) {
     <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm space-y-2">
       <div className="flex items-center justify-between">
         <h3 className="font-medium text-slate-700">Contexto del producto que va a usar el orchestrator</h3>
-        <Link
-          to={`/products/${product.id}/edit`}
-          className="text-xs text-brand-600 hover:underline"
-        >
-          Editar producto →
-        </Link>
+        <div className="flex gap-3 text-xs">
+          <Link to={`/products/${product.id}/history`} className="text-slate-600 hover:underline">
+            Histórico →
+          </Link>
+          <Link to={`/products/${product.id}/edit`} className="text-brand-600 hover:underline">
+            Editar producto →
+          </Link>
+        </div>
       </div>
 
       {missing.length > 0 && (
@@ -163,6 +155,14 @@ function ProductBriefPanel({ product }) {
       <Row label="Contexto"  value={product.context} />
       <Row label="Plataformas" value={Array.isArray(product.platforms) && product.platforms.length ? product.platforms.join(' · ') : null} />
       <Row label="Formatos"  value={Array.isArray(product.formats) && product.formats.length ? product.formats.join(' · ') : null} />
+      <Row
+        label="Histórico"
+        value={historyCount == null
+          ? '…'
+          : historyCount === 0
+            ? 'sin campañas previas cargadas (el Analyzer no tendrá benchmarks)'
+            : `${historyCount} campaña${historyCount > 1 ? 's' : ''} previa${historyCount > 1 ? 's' : ''} cargada${historyCount > 1 ? 's' : ''}`}
+      />
     </div>
   );
 }

@@ -1,16 +1,33 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Products() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    api.get('/api/products')
-      .then((d) => setItems(d.products))
-      .finally(() => setLoading(false));
-  }, []);
+  async function load() {
+    setLoading(true);
+    try {
+      const d = await api.get('/api/products');
+      setItems(d.products);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleDelete(p) {
+    if (!confirm(`¿Eliminar el producto "${p.name}"? Soft-delete: queda en DB pero no aparece en listas. Sus experimentos siguen accesibles.`)) return;
+    try {
+      await api.del(`/api/products/${p.id}`);
+      await load();
+    } catch (err) { setError(err.message); }
+  }
 
   return (
     <div className="space-y-6">
@@ -60,10 +77,21 @@ export default function Products() {
                   <td className="px-4 py-3">
                     <Tags items={p.formats} empty="—" />
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right space-x-3">
+                    <Link to={`/products/${p.id}/history`} className="text-sm text-slate-600 hover:underline">
+                      Histórico
+                    </Link>
                     <Link to={`/products/${p.id}/edit`} className="text-sm text-brand-600 hover:underline">
                       Editar
                     </Link>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleDelete(p)}
+                        className="text-sm text-red-600 hover:underline"
+                      >
+                        Eliminar
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -71,6 +99,8 @@ export default function Products() {
           </table>
         </div>
       )}
+
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md p-3">{error}</div>}
     </div>
   );
 }

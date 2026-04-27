@@ -1,16 +1,33 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Clients() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    api.get('/api/clients')
-      .then((d) => setItems(d.clients))
-      .finally(() => setLoading(false));
-  }, []);
+  async function load() {
+    setLoading(true);
+    try {
+      const d = await api.get('/api/clients');
+      setItems(d.clients);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleDelete(c) {
+    if (!confirm(`¿Eliminar al cliente "${c.name}"? Soft-delete: el cliente y sus productos siguen en DB pero no aparecen en listas.`)) return;
+    try {
+      await api.del(`/api/clients/${c.id}`);
+      await load();
+    } catch (err) { setError(err.message); }
+  }
 
   return (
     <div className="space-y-6">
@@ -49,10 +66,18 @@ export default function Clients() {
                   <td className="px-4 py-3 text-slate-500 text-xs line-clamp-1 max-w-md">
                     {c.notes || '—'}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right space-x-3">
                     <Link to={`/clients/${c.id}/edit`} className="text-sm text-brand-600 hover:underline">
                       Editar
                     </Link>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleDelete(c)}
+                        className="text-sm text-red-600 hover:underline"
+                      >
+                        Eliminar
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -60,6 +85,8 @@ export default function Clients() {
           </table>
         </div>
       )}
+
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md p-3">{error}</div>}
     </div>
   );
 }
