@@ -11,6 +11,11 @@ router.use(requireAuth);
 
 const RUNNING_STATUSES = new Set(['analyzing', 'optimizing', 'executing', 'scoring']);
 
+const channelSchema = z.object({
+  platform: z.string().min(1),
+  format:   z.string().min(1),
+});
+
 const createSchema = z.object({
   product_id: z.number().int().positive(),
   name: z.string().min(1).max(255),
@@ -18,8 +23,7 @@ const createSchema = z.object({
   champion_image_url: z.string().url().optional().nullable(),
   champion_public_id: z.string().optional().nullable(),
   historical_data: z.any().optional(),
-  platforms: z.array(z.string()).min(1, 'Elegí al menos una plataforma'),
-  formats:   z.array(z.string()).min(1, 'Elegí al menos un formato'),
+  channels: z.array(channelSchema).min(1, 'Elegí al menos un canal'),
 });
 
 router.get(
@@ -71,11 +75,15 @@ router.post(
   requireRole('admin', 'analyst'),
   asyncHandler(async (req, res) => {
     const data = createSchema.parse(req.body);
+    // Derivar platforms/formats de los canales para retrocompat de queries.
+    const derivedPlatforms = Array.from(new Set(data.channels.map((c) => c.platform)));
+    const derivedFormats   = Array.from(new Set(data.channels.map((c) => c.format)));
+
     const { rows } = await pool.query(
       `INSERT INTO experiments
          (product_id, name, brief_snapshot, champion_image_url, champion_public_id,
-          historical_data, platforms, formats, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)
+          historical_data, channels, platforms, formats, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10)
        RETURNING *`,
       [
         data.product_id,
@@ -84,8 +92,9 @@ router.post(
         data.champion_image_url ?? null,
         data.champion_public_id ?? null,
         data.historical_data != null ? JSON.stringify(data.historical_data) : null,
-        JSON.stringify(data.platforms),
-        JSON.stringify(data.formats),
+        JSON.stringify(data.channels),
+        JSON.stringify(derivedPlatforms),
+        JSON.stringify(derivedFormats),
         req.user.sub,
       ],
     );
@@ -99,11 +108,10 @@ const patchSchema = z.object({
   champion_image_url: z.string().url().nullable().optional(),
   champion_public_id: z.string().nullable().optional(),
   historical_data: z.any().optional(),
-  platforms: z.array(z.string()).min(1).optional(),
-  formats:   z.array(z.string()).min(1).optional(),
+  channels: z.array(channelSchema).min(1).optional(),
 });
 
-const JSONB_FIELDS = new Set(['historical_data', 'platforms', 'formats']);
+const JSONB_FIELDS = new Set(['historical_data', 'channels']);
 
 router.patch(
   '/:id',

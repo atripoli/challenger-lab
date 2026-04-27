@@ -2,13 +2,32 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 
-const PLATFORM_OPTIONS = ['Facebook', 'Instagram', 'LinkedIn', 'TikTok', 'YouTube', 'Twitter', 'Google'];
-const FORMAT_OPTIONS   = ['feed', 'stories', 'carousel', 'reel', 'video', 'image', 'text'];
+// Canales predefinidos. Cada uno es una combinación específica (platform, format)
+// que el modelo va a respetar 1:1 — sin agregar variantes ni cross-products.
+const CHANNEL_OPTIONS = [
+  { platform: 'Facebook',  format: 'feed',     label: 'Facebook · feed' },
+  { platform: 'Facebook',  format: 'stories',  label: 'Facebook · stories' },
+  { platform: 'Facebook',  format: 'reel',     label: 'Facebook · reel' },
+  { platform: 'Instagram', format: 'feed',     label: 'Instagram · feed' },
+  { platform: 'Instagram', format: 'stories',  label: 'Instagram · stories' },
+  { platform: 'Instagram', format: 'reel',     label: 'Instagram · reel' },
+  { platform: 'Instagram', format: 'carousel', label: 'Instagram · carousel' },
+  { platform: 'LinkedIn',  format: 'feed',     label: 'LinkedIn · feed' },
+  { platform: 'LinkedIn',  format: 'carousel', label: 'LinkedIn · carousel' },
+  { platform: 'TikTok',    format: 'video',    label: 'TikTok · video' },
+  { platform: 'YouTube',   format: 'video',    label: 'YouTube · video' },
+  { platform: 'YouTube',   format: 'shorts',   label: 'YouTube · shorts' },
+  { platform: 'Twitter',   format: 'feed',     label: 'Twitter · feed' },
+  { platform: 'Google',    format: 'search',   label: 'Google · search' },
+  { platform: 'Google',    format: 'display',  label: 'Google · display' },
+];
+
+const channelKey = (c) => `${c.platform}|${c.format}`;
 
 export default function ExperimentNew() {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
-  const [form, setForm] = useState({ product_id: '', name: '', platforms: [], formats: [] });
+  const [form, setForm] = useState({ product_id: '', name: '', channels: [] });
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -25,27 +44,41 @@ export default function ExperimentNew() {
   );
 
   // Cuando cambia el producto seleccionado, traemos cuántas campañas de
-  // histórico tiene cargadas + precargamos platforms/formats con los del producto.
+  // histórico tiene cargadas + precargamos canales con el cross-product de
+  // platforms × formats del producto (default sugerido). El usuario puede
+  // ajustar antes de submit.
   useEffect(() => {
     if (!selectedProduct) { setHistoryCount(null); return; }
     api.get(`/api/products/${selectedProduct.id}/history`)
       .then((d) => setHistoryCount(d.history.length))
       .catch(() => setHistoryCount(null));
 
-    // Precargar platforms/formats desde el producto si el form todavía está vacío.
-    setForm((f) => ({
-      ...f,
-      platforms: f.platforms.length > 0 ? f.platforms : (selectedProduct.platforms || []),
-      formats:   f.formats.length   > 0 ? f.formats   : (selectedProduct.formats   || []),
-    }));
+    setForm((f) => {
+      if (f.channels.length > 0) return f; // no pisar selección manual
+      const pp = selectedProduct.platforms || [];
+      const ff = selectedProduct.formats   || [];
+      const seeded = [];
+      for (const p of pp) for (const fmt of ff) {
+        // matchear contra opciones predefinidas
+        const opt = CHANNEL_OPTIONS.find((o) => o.platform === p && o.format === fmt);
+        if (opt) seeded.push({ platform: opt.platform, format: opt.format });
+      }
+      return { ...f, channels: seeded };
+    });
   }, [selectedProduct?.id]);
 
   function update(k, v) { setForm((f) => ({ ...f, [k]: v })); }
-  function toggle(k, v) {
-    setForm((f) => ({
-      ...f,
-      [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v],
-    }));
+  function toggleChannel(option) {
+    setForm((f) => {
+      const key = channelKey(option);
+      const exists = f.channels.some((c) => channelKey(c) === key);
+      return {
+        ...f,
+        channels: exists
+          ? f.channels.filter((c) => channelKey(c) !== key)
+          : [...f.channels, { platform: option.platform, format: option.format }],
+      };
+    });
   }
 
   function onFile(e) {
@@ -60,8 +93,7 @@ export default function ExperimentNew() {
     if (!form.product_id) return setError('Elegí un producto');
     if (!form.name.trim()) return setError('Ingresá un nombre');
     if (!file) return setError('Subí la imagen del Champion');
-    if (form.platforms.length === 0) return setError('Elegí al menos una plataforma');
-    if (form.formats.length === 0) return setError('Elegí al menos un formato');
+    if (form.channels.length === 0) return setError('Elegí al menos un canal');
 
     setSubmitting(true);
     try {
@@ -71,8 +103,7 @@ export default function ExperimentNew() {
         name: form.name.trim(),
         champion_image_url: uploaded.url,
         champion_public_id: uploaded.public_id,
-        platforms: form.platforms,
-        formats:   form.formats,
+        channels: form.channels,
       });
       navigate(`/experiments/${experiment.id}`);
     } catch (err) {
@@ -123,28 +154,14 @@ export default function ExperimentNew() {
       </Field>
 
       <Field
-        label="Plataformas para este experimento"
+        label="Canales para este experimento"
         required
-        hint={selectedProduct
-          ? "Precargado con las plataformas típicas del producto. Ajustá si en este experimento querés probar canales distintos."
-          : "Elegí primero un producto."}
+        hint={`Marcá cada canal específico (plataforma + formato) donde vas a correr. El Ogilvy genera EXACTAMENTE un creativo por canal seleccionado — ${form.channels.length} ${form.channels.length === 1 ? 'creativo será generado' : 'creativos serán generados'}.`}
       >
-        <ChipsGroup
-          options={PLATFORM_OPTIONS}
-          selected={form.platforms}
-          onToggle={(v) => toggle('platforms', v)}
-        />
-      </Field>
-
-      <Field
-        label="Formatos para este experimento"
-        required
-        hint="El Ogilvy va a generar un creativo por cada combo (plataforma × formato) que tenga sentido."
-      >
-        <ChipsGroup
-          options={FORMAT_OPTIONS}
-          selected={form.formats}
-          onToggle={(v) => toggle('formats', v)}
+        <ChannelChips
+          options={CHANNEL_OPTIONS}
+          selected={form.channels}
+          onToggle={toggleChannel}
         />
       </Field>
 
@@ -236,14 +253,15 @@ function Field({ label, required, hint, children }) {
   );
 }
 
-function ChipsGroup({ options, selected, onToggle }) {
+function ChannelChips({ options, selected, onToggle }) {
   return (
     <div className="flex flex-wrap gap-2">
       {options.map((opt) => {
-        const active = selected.includes(opt);
+        const key = channelKey(opt);
+        const active = selected.some((c) => channelKey(c) === key);
         return (
           <button
-            key={opt}
+            key={key}
             type="button"
             onClick={() => onToggle(opt)}
             className={`text-xs px-2.5 py-1 rounded-full border transition ${
@@ -252,7 +270,7 @@ function ChipsGroup({ options, selected, onToggle }) {
                 : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400'
             }`}
           >
-            {opt}
+            {opt.label}
           </button>
         );
       })}

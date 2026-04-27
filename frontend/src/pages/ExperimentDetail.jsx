@@ -529,7 +529,7 @@ function OptimizedBlock({ items }) {
 function ExecutionsBlock({ executions, winnerId }) {
   return (
     <div>
-      <h3 className="text-sm font-medium text-slate-700 mb-2">3 · Ejecuciones creativas (anatomía Meta)</h3>
+      <h3 className="text-sm font-medium text-slate-700 mb-2">3 · Ejecuciones creativas</h3>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {executions.map((ex, i) => (
           <ExecutionCard key={ex.angle_number ?? i} ex={ex} winnerId={winnerId} />

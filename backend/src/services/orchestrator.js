@@ -208,6 +208,11 @@ async function stepOptimizeAngles(ctx, angles) {
 
 async function stepCreateExecutions(ctx, optimizedAngles) {
   const templates = await loadTemplatesLibrary();
+  const channels = ctx.channels || [];
+  if (channels.length === 0) {
+    throw new Error('El experimento no tiene canales (channels) seleccionados');
+  }
+
   const userBlocks = [
     {
       type: 'text',
@@ -218,13 +223,14 @@ async function stepCreateExecutions(ctx, optimizedAngles) {
         '## templates_library',
         JSON.stringify(templates),
         '',
+        '## channels (CANALES SELECCIONADOS — generar EXACTAMENTE uno por entrada)',
+        JSON.stringify(channels),
+        '',
         '## Product meta',
-        `- platforms: ${JSON.stringify(ctx.platforms || [])}`,
-        `- formats:   ${JSON.stringify(ctx.formats   || [])}`,
         `- target_audience: ${ctx.target_audience || '(sin target)'}`,
         `- key_benefit: ${ctx.key_benefit || '(sin key benefit)'}`,
         '',
-        'Mantené el mismo `angle_number` en cada ejecución.',
+        `IMPORTANTE: cada ejecución debe tener creatives.length === ${channels.length}, y cada creative.platform + creative.format debe matchear EXACTAMENTE con un canal del input. Mantené el mismo angle_number.`,
         JSON_REMINDER,
       ].join('\n'),
     },
@@ -232,6 +238,25 @@ async function stepCreateExecutions(ctx, optimizedAngles) {
   const { parsed } = await runSkill('ogilvy_creative_execution', userBlocks);
   if (!Array.isArray(parsed.executions)) {
     throw new Error('Ogilvy skill no devolvió `executions` como array');
+  }
+
+  // Validación: cada ejecución debe tener creatives matching los canales pedidos.
+  const expectedKeys = new Set(channels.map((c) => `${c.platform}|${c.format}`));
+  for (const ex of parsed.executions) {
+    if (!Array.isArray(ex.creatives)) {
+      throw new Error(`Ogilvy: ejecución #${ex.angle_number} sin array creatives`);
+    }
+    if (ex.creatives.length !== channels.length) {
+      throw new Error(
+        `Ogilvy: ejecución #${ex.angle_number} devolvió ${ex.creatives.length} creatives, se esperaban ${channels.length}`,
+      );
+    }
+    const gotKeys = new Set(ex.creatives.map((c) => `${c.platform}|${c.format}`));
+    for (const key of expectedKeys) {
+      if (!gotKeys.has(key)) {
+        throw new Error(`Ogilvy: ejecución #${ex.angle_number} no tiene creative para ${key}`);
+      }
+    }
   }
   return parsed.executions;
 }
@@ -284,7 +309,7 @@ async function loadContext(id) {
   const { rows } = await pool.query(
     `SELECT e.id, e.name, e.status, e.champion_image_url, e.historical_data,
             e.brief_snapshot AS legacy_brief, e.angles, e.selected_angle_numbers,
-            e.product_id,
+            e.product_id, e.channels,
             e.platforms AS exp_platforms, e.formats AS exp_formats,
             p.brief_text, p.target_audience, p.key_benefit, p.context,
             p.platforms AS product_platforms, p.formats AS product_formats
@@ -296,13 +321,20 @@ async function loadContext(id) {
   if (!rows.length) return null;
   const r = rows[0];
   if (!r.brief_text && r.legacy_brief) r.brief_text = r.legacy_brief;
-  // platforms/formats ahora viven en el experimento; el producto sólo da defaults.
-  r.platforms = (Array.isArray(r.exp_platforms) && r.exp_platforms.length > 0)
-    ? r.exp_platforms
-    : (r.product_platforms || []);
-  r.formats = (Array.isArray(r.exp_formats) && r.exp_formats.length > 0)
-    ? r.exp_formats
-    : (r.product_formats || []);
+
+  // channels es la fuente de verdad. Si está vacío, derivamos cross-product
+  // de platforms × formats (legacy backfill).
+  if (!Array.isArray(r.channels) || r.channels.length === 0) {
+    const platforms = (Array.isArray(r.exp_platforms) && r.exp_platforms.length > 0)
+      ? r.exp_platforms : (r.product_platforms || []);
+    const formats = (Array.isArray(r.exp_formats) && r.exp_formats.length > 0)
+      ? r.exp_formats : (r.product_formats || []);
+    r.channels = [];
+    for (const p of platforms) for (const f of formats) r.channels.push({ platform: p, format: f });
+  }
+  // platforms/formats expuestos para retro-compat con prompts viejos (no usado en v7).
+  r.platforms = Array.from(new Set((r.channels || []).map((c) => c.platform)));
+  r.formats   = Array.from(new Set((r.channels || []).map((c) => c.format)));
 
   // Carga el histórico de campañas previas del producto.
   // Combina con el legacy `historical_data` del experimento (para experimentos
