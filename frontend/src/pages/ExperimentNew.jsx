@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 
 export default function ExperimentNew() {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
-  const [form, setForm] = useState({ product_id: '', name: '', brief_snapshot: '', historical_json: '' });
+  const [form, setForm] = useState({ product_id: '', name: '', historical_json: '' });
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -14,6 +14,11 @@ export default function ExperimentNew() {
   useEffect(() => {
     api.get('/api/products').then((d) => setProducts(d.products));
   }, []);
+
+  const selectedProduct = useMemo(
+    () => products.find((p) => String(p.id) === String(form.product_id)) || null,
+    [products, form.product_id],
+  );
 
   function update(k, v) { setForm((f) => ({ ...f, [k]: v })); }
 
@@ -42,7 +47,6 @@ export default function ExperimentNew() {
       const { experiment } = await api.post('/api/experiments', {
         product_id: Number(form.product_id),
         name: form.name.trim(),
-        brief_snapshot: form.brief_snapshot.trim() || null,
         champion_image_url: uploaded.url,
         champion_public_id: uploaded.public_id,
         historical_data: historical,
@@ -59,7 +63,11 @@ export default function ExperimentNew() {
     <form onSubmit={onSubmit} className="max-w-3xl space-y-5">
       <h1 className="text-2xl font-semibold text-slate-900">Nuevo experimento</h1>
 
-      <Field label="Producto" required>
+      <Field
+        label="Producto"
+        required
+        hint="El brief, audiencia, key benefit, contexto, plataformas y formatos se leen del producto. Si falta info, editalo o creá uno nuevo antes de continuar."
+      >
         <select
           value={form.product_id}
           onChange={(e) => update('product_id', e.target.value)}
@@ -71,6 +79,8 @@ export default function ExperimentNew() {
           ))}
         </select>
       </Field>
+
+      {selectedProduct && <ProductBriefPanel product={selectedProduct} />}
 
       <Field label="Nombre del experimento" required>
         <input
@@ -89,16 +99,10 @@ export default function ExperimentNew() {
         )}
       </Field>
 
-      <Field label="Brief del producto" hint="Texto libre que se usará como contexto.">
-        <textarea
-          rows={5}
-          value={form.brief_snapshot}
-          onChange={(e) => update('brief_snapshot', e.target.value)}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        />
-      </Field>
-
-      <Field label="Histórico (JSON opcional)" hint="Array de campañas previas con métricas. Se parsea como JSON.">
+      <Field
+        label="Histórico (JSON opcional)"
+        hint="Métricas de campañas previas — se pasan al Analyzer y al Scorer como contexto. Solo aplica a este experimento."
+      >
         <textarea
           rows={5}
           value={form.historical_json}
@@ -127,6 +131,50 @@ export default function ExperimentNew() {
         </button>
       </div>
     </form>
+  );
+}
+
+function ProductBriefPanel({ product }) {
+  const missing = [];
+  if (!product.brief_text)      missing.push('brief_text');
+  if (!product.target_audience) missing.push('target_audience');
+
+  return (
+    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium text-slate-700">Contexto del producto que va a usar el orchestrator</h3>
+        <Link
+          to={`/products/${product.id}/edit`}
+          className="text-xs text-brand-600 hover:underline"
+        >
+          Editar producto →
+        </Link>
+      </div>
+
+      {missing.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded px-3 py-2 text-xs">
+          ⚠️ Faltan campos obligatorios en el producto: <b>{missing.join(', ')}</b>. Completalos antes de ejecutar para evitar respuestas pobres.
+        </div>
+      )}
+
+      <Row label="Brief"     value={product.brief_text} />
+      <Row label="Target"    value={product.target_audience} />
+      <Row label="Key benefit" value={product.key_benefit} />
+      <Row label="Contexto"  value={product.context} />
+      <Row label="Plataformas" value={Array.isArray(product.platforms) && product.platforms.length ? product.platforms.join(' · ') : null} />
+      <Row label="Formatos"  value={Array.isArray(product.formats) && product.formats.length ? product.formats.join(' · ') : null} />
+    </div>
+  );
+}
+
+function Row({ label, value }) {
+  return (
+    <div className="grid grid-cols-[110px_1fr] gap-2 text-xs">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-slate-700 whitespace-pre-wrap">
+        {value || <i className="text-slate-400">(vacío)</i>}
+      </span>
+    </div>
   );
 }
 
