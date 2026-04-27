@@ -34,12 +34,20 @@ export default function Experiments() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-900">Experimentos</h1>
-        <Link
-          to="/experiments/new"
-          className="text-sm bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-md"
-        >
-          Nuevo experimento
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/experiments/compare"
+            className="text-sm border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-md"
+          >
+            Comparar
+          </Link>
+          <Link
+            to="/experiments/new"
+            className="text-sm bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-md"
+          >
+            Nuevo experimento
+          </Link>
+        </div>
       </div>
 
       {loading ? (
