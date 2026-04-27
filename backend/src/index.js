@@ -14,6 +14,7 @@ const productHistoryRoutes = require('./routes/productHistory');
 const experimentRoutes = require('./routes/experiments');
 const skillPromptRoutes = require('./routes/skillPrompts');
 const uploadRoutes = require('./routes/uploads');
+const statsRoutes = require('./routes/stats');
 
 const app = express();
 
@@ -48,6 +49,7 @@ app.use('/api/products/:productId/history', productHistoryRoutes);
 app.use('/api/experiments', experimentRoutes);
 app.use('/api/skill-prompts', skillPromptRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/stats', statsRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found', path: req.path });

@@ -1,53 +1,261 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 
+const CATEGORY_COLOR = {
+  FUNCTIONAL_BENEFIT:   'bg-sky-500',
+  ECONOMIC_OPPORTUNITY: 'bg-emerald-500',
+  SOCIAL_STATUS:        'bg-violet-500',
+  EMOTIONAL_IDENTITY:   'bg-rose-500',
+  CULTURAL_TIMING:      'bg-amber-500',
+};
+
+const PLATFORM_COLOR = {
+  facebook:  'bg-blue-500',
+  instagram: 'bg-pink-500',
+  linkedin:  'bg-sky-500',
+  tiktok:    'bg-fuchsia-500',
+  youtube:   'bg-red-500',
+  twitter:   'bg-slate-500',
+  google:    'bg-emerald-500',
+};
+
 export default function Dashboard() {
-  const [stats, setStats] = useState({ experiments: 0, clients: 0, products: 0 });
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get('/api/experiments').catch(() => ({ experiments: [] })),
-      api.get('/api/clients').catch(() => ({ clients: [] })),
-      api.get('/api/products').catch(() => ({ products: [] })),
-    ]).then(([e, c, p]) => {
-      setStats({
-        experiments: e.experiments?.length ?? 0,
-        clients:     c.clients?.length     ?? 0,
-        products:    p.products?.length    ?? 0,
-      });
-      setLoading(false);
-    });
+    api.get('/api/stats/dashboard')
+      .then(setStats)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }, []);
 
-  const cards = [
-    { label: 'Experimentos', value: stats.experiments },
-    { label: 'Clientes',     value: stats.clients },
-    { label: 'Productos',    value: stats.products },
-  ];
+  if (loading) return <div className="text-slate-500 text-sm">Cargando…</div>;
+  if (error) return <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md p-3">{error}</div>;
+  if (!stats) return null;
+
+  const { totals, uplift, winning_categories, platform_predictions, recent_completed, pipeline_duration } = stats;
+  const isEmpty = totals.experiments === 0;
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {cards.map((c) => (
-          <div key={c.label} className="bg-white rounded-lg border border-slate-200 p-5">
-            <div className="text-sm text-slate-500">{c.label}</div>
-            <div className="mt-2 text-3xl font-semibold text-slate-900">
-              {loading ? '—' : c.value}
-            </div>
-          </div>
-        ))}
-      </div>
+      {isEmpty && (
+        <div className="bg-white border border-dashed border-slate-300 rounded-lg p-10 text-center">
+          <p className="text-slate-600 text-sm">
+            Todavía no hay experimentos cargados. <Link to="/experiments/new" className="text-brand-600 hover:underline">Creá el primero</Link> para empezar a ver patrones.
+          </p>
+        </div>
+      )}
 
-      <div className="bg-white rounded-lg border border-slate-200 p-6">
-        <h2 className="text-lg font-medium text-slate-900">Fase 1 completa</h2>
-        <p className="text-sm text-slate-600 mt-2">
-          Estructura base lista: auth, schema, CRUD y configuración de prompts. La Fase 2 suma
-          subida del Champion y orquestación de los 4 skills.
-        </p>
-      </div>
+      {!isEmpty && (
+        <>
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Kpi label="Total experimentos"    value={totals.experiments} />
+            <Kpi label="Completados"           value={totals.completed} sub={percent(totals.completed, totals.experiments)} />
+            <Kpi label="Uplift promedio"       value={fmtUplift(uplift.avg)} sub={uplift.n ? `n=${uplift.n}` : 'sin data'} highlight={uplift.avg > 0} />
+            <Kpi label="Tiempo promedio pipeline" value={fmtDuration(pipeline_duration.avg_seconds)} sub={pipeline_duration.n ? `${pipeline_duration.n} corridas` : '—'} />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <MiniStat label="En revisión"     value={totals.awaiting_review} accent="bg-amber-100 text-amber-800" link="/experiments?status=awaiting_review" />
+            <MiniStat label="Corriendo"       value={totals.analyzing + totals.optimizing + totals.executing + totals.scoring} accent="bg-blue-100 text-blue-700" />
+            <MiniStat label="Fallidos"        value={totals.failed} accent="bg-red-100 text-red-700" />
+            <MiniStat label="Borradores"      value={totals.draft} accent="bg-slate-100 text-slate-700" />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <CategoryDistribution items={winning_categories} totalWins={winning_categories.reduce((s, r) => s + r.wins, 0)} />
+            <PlatformPredictionRanking items={platform_predictions} />
+          </div>
+
+          <UpliftDistribution uplift={uplift} />
+
+          <RecentCompleted items={recent_completed} />
+        </>
+      )}
     </div>
   );
+}
+
+// ---------------- componentes ----------------
+
+function Kpi({ label, value, sub, highlight }) {
+  return (
+    <div className={`rounded-lg border p-4 ${highlight ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}`}>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className={`mt-1 text-2xl font-bold ${highlight ? 'text-emerald-700' : 'text-slate-900'}`}>{value}</div>
+      {sub && <div className="text-[11px] text-slate-500 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, accent, link }) {
+  const inner = (
+    <div className={`rounded-md px-3 py-2 flex items-center justify-between ${accent}`}>
+      <span className="text-xs">{label}</span>
+      <span className="font-semibold text-sm">{value}</span>
+    </div>
+  );
+  return link ? <Link to={link}>{inner}</Link> : inner;
+}
+
+function CategoryDistribution({ items, totalWins }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <h3 className="text-sm font-medium text-slate-700">Categorías ganadoras</h3>
+      <p className="text-xs text-slate-500 mb-3">Cuál de las 5 categorías estratégicas gana más experimentos.</p>
+      {totalWins === 0 ? (
+        <div className="text-xs text-slate-400">Sin experimentos completados todavía.</div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((c) => (
+            <div key={c.category}>
+              <div className="flex items-baseline justify-between text-xs mb-1">
+                <span className="text-slate-700">{(c.category || '—').replace(/_/g, ' ')}</span>
+                <span className="text-slate-500 font-mono">
+                  {c.wins} <span className="text-slate-400">({Math.round(c.share * 100)}%)</span>
+                </span>
+              </div>
+              <div className="bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-full ${CATEGORY_COLOR[c.category] || 'bg-slate-400'}`}
+                  style={{ width: `${Math.max(2, c.share * 100)}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlatformPredictionRanking({ items }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <h3 className="text-sm font-medium text-slate-700">Plataformas mejor predichas</h3>
+      <p className="text-xs text-slate-500 mb-3">Score promedio (0-10) que el Performance Scorer asigna a cada plataforma para los challengers.</p>
+      {items.length === 0 ? (
+        <div className="text-xs text-slate-400">Sin datos de platform_prediction todavía.</div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((p) => (
+            <div key={p.platform}>
+              <div className="flex items-baseline justify-between text-xs mb-1">
+                <span className="text-slate-700 capitalize">{p.platform}</span>
+                <span className="text-slate-500 font-mono">
+                  {p.avg_score.toFixed(2)}<span className="text-slate-400"> / 10</span>
+                </span>
+              </div>
+              <div className="bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-full ${PLATFORM_COLOR[p.platform.toLowerCase()] || 'bg-slate-400'}`}
+                  style={{ width: `${Math.max(2, (p.avg_score / 10) * 100)}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UpliftDistribution({ uplift }) {
+  if (uplift.n === 0) return null;
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <h3 className="text-sm font-medium text-slate-700 mb-3">Distribución de uplift vs Champion</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+        <Stat label="Promedio" value={fmtUplift(uplift.avg)} />
+        <Stat label="Mediana"  value={fmtUplift(uplift.median)} />
+        <Stat label="Máximo"   value={fmtUplift(uplift.max)} positive />
+        <Stat label="Mínimo"   value={fmtUplift(uplift.min)} negative={uplift.min < 0} />
+      </div>
+      <p className="text-xs text-slate-500 mt-3 text-center">
+        {uplift.n} experimento{uplift.n !== 1 ? 's' : ''} completado{uplift.n !== 1 ? 's' : ''}.
+        {uplift.avg < 0 && <span className="text-red-600 ml-1">⚠ El promedio es negativo: en general los challengers están perdiendo contra el Champion.</span>}
+      </p>
+    </div>
+  );
+}
+
+function Stat({ label, value, positive, negative }) {
+  const cls = negative ? 'text-red-600' : positive ? 'text-emerald-600' : 'text-slate-900';
+  return (
+    <div className="bg-slate-50 rounded p-3">
+      <div className="text-[11px] text-slate-500 uppercase tracking-wide">{label}</div>
+      <div className={`mt-1 text-xl font-bold ${cls}`}>{value}</div>
+    </div>
+  );
+}
+
+function RecentCompleted({ items }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <div className="px-5 py-3 border-b border-slate-200">
+        <h3 className="text-sm font-medium text-slate-700">Últimos 5 completados</h3>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 text-slate-600 text-xs">
+          <tr>
+            <th className="px-4 py-2 text-left">Nombre</th>
+            <th className="px-4 py-2 text-left">Cliente / Producto</th>
+            <th className="px-4 py-2 text-left">Ganador</th>
+            <th className="px-4 py-2 text-right">Uplift</th>
+            <th className="px-4 py-2 text-right">Completado</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {items.map((e) => (
+            <tr key={e.id} className="hover:bg-slate-50">
+              <td className="px-4 py-3">
+                <Link to={`/experiments/${e.id}`} className="text-brand-600 hover:underline">
+                  {e.name}
+                </Link>
+                {e.recommendation && (
+                  <div className="text-[11px] text-slate-500 line-clamp-1 max-w-md mt-0.5">
+                    {e.recommendation}
+                  </div>
+                )}
+              </td>
+              <td className="px-4 py-3 text-slate-600 text-xs">{e.client_name} · {e.product_name}</td>
+              <td className="px-4 py-3 font-mono text-xs text-slate-700">{e.winner_id || '—'}</td>
+              <td className={`px-4 py-3 text-right font-semibold ${e.uplift_vs_champion >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {fmtUplift(e.uplift_vs_champion)}
+              </td>
+              <td className="px-4 py-3 text-right text-slate-500 text-xs">
+                {e.completed_at ? new Date(e.completed_at).toLocaleDateString('es-AR') : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------- helpers ----------------
+
+function percent(n, total) {
+  if (!total) return '0%';
+  return `${Math.round((n / total) * 100)}%`;
+}
+function fmtUplift(n) {
+  if (n == null || isNaN(n)) return '—';
+  const v = Number(n);
+  return `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+}
+function fmtDuration(seconds) {
+  if (!seconds || isNaN(seconds)) return '—';
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`;
 }
