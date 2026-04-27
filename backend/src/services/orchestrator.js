@@ -147,6 +147,8 @@ async function patchAngles(experimentId, newAngles) {
 // ============== pasos ==============
 
 async function stepAnalyzeAngles(ctx) {
+  const previousAngles = await loadPreviousAngles(ctx.product_id, ctx.id);
+
   const userBlocks = [
     { type: 'image', source: { type: 'url', url: ctx.champion_image_url } },
     {
@@ -164,6 +166,11 @@ async function stepAnalyzeAngles(ctx) {
         '',
         '## Histórico de performance',
         ctx.historical_data ? JSON.stringify(ctx.historical_data, null, 2) : '(sin histórico cargado)',
+        '',
+        '## previously_explored_angles',
+        previousAngles.length > 0
+          ? `Ya se generaron ${previousAngles.length} ángulos en experimentos anteriores de este producto. NO los recicles ni con paráfrasis. Buscá insights frescos.\n${JSON.stringify(previousAngles, null, 2)}`
+          : '(sin ángulos previos — primer experimento sobre este producto)',
         '',
         JSON_REMINDER,
       ].join('\n'),
@@ -379,6 +386,46 @@ async function patchJsonb(id, patch) {
     `UPDATE experiments SET ${setClauses}, updated_at = NOW() WHERE id = $${values.length}`,
     values,
   );
+}
+
+/**
+ * Carga los ángulos generados en experimentos previos del MISMO producto,
+ * excluyendo el experimento actual y los que fallaron. Devuelve un array
+ * compacto con sólo los campos relevantes para evitar repetición.
+ */
+async function loadPreviousAngles(productId, currentExperimentId, limit = 30) {
+  const { rows } = await pool.query(
+    `SELECT angle->>'angle_name' AS angle_name,
+            angle->>'category'   AS category,
+            angle->>'insight'    AS insight,
+            angle->>'benefit'    AS benefit
+       FROM experiments e,
+            jsonb_array_elements(e.angles) angle
+      WHERE e.product_id = $1
+        AND e.id != $2
+        AND e.deleted_at IS NULL
+        AND e.angles IS NOT NULL
+        AND e.status != 'failed'
+      ORDER BY e.created_at DESC
+      LIMIT $3`,
+    [productId, currentExperimentId, limit],
+  );
+  // Deduplicar por nombre normalizado (case-insensitive, sin espacios extra)
+  const seen = new Set();
+  const out = [];
+  for (const r of rows) {
+    const key = (r.angle_name || '').toLowerCase().trim();
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      out.push({
+        angle_name: r.angle_name,
+        category:   r.category,
+        insight:    r.insight,
+        benefit:    r.benefit,
+      });
+    }
+  }
+  return out;
 }
 
 async function loadNudgesLibrary() {
