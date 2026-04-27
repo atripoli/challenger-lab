@@ -544,25 +544,34 @@ function ExecutionCard({ ex, winnerId }) {
   const id = `angle_${num}`;
   const isWinner = winnerId === id;
 
-  // Soporte v5 (anatomía Meta) y fallback a v4/v3
-  const visual = ex.visual || ex.visual_concept || {};
-  const overlay = ex.overlay_text || null;
-  const cta = ex.cta || {};
-  const ctaButtonText = ex.cta_button || cta.button_text || cta.text || '';
-  const systemCta = ex.system_cta_type || cta.action || cta.type || null;
-  const postCopy = ex.post_copy || ex.body_copy || null;
-  const variants = Array.isArray(ex.copy_variants) ? ex.copy_variants : null;
+  // v6: array `creatives` por (platform, format).
+  // Fallback v5/v4/v3: armar un creative single con los campos sueltos.
+  const creatives = Array.isArray(ex.creatives) && ex.creatives.length > 0
+    ? ex.creatives
+    : [{
+        platform:        'Anuncio',
+        format:          null,
+        aspect_ratio:    null,
+        post_copy:       ex.post_copy || ex.body_copy || null,
+        visual:          ex.visual || ex.visual_concept || {},
+        overlay_text:    ex.overlay_text || null,
+        cta_button:      ex.cta_button || ex.cta?.button_text || ex.cta?.text || null,
+        headline:        ex.headline || null,
+        description:     ex.description || null,
+        system_cta_type: ex.system_cta_type || ex.cta?.action || ex.cta?.type || null,
+      }];
 
   return (
     <div className={`rounded-lg p-4 border ${isWinner ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'} space-y-3`}>
-      {/* Header */}
+      {/* Header del ángulo */}
       <div className="flex items-baseline justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-400">#{num}</span>
           {ex.template_used && (
             <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">{ex.template_used}</span>
           )}
           {ex.tone && <span className="text-[10px] text-slate-500 italic">{ex.tone}</span>}
+          <span className="text-[10px] text-slate-400">· {creatives.length} creativo{creatives.length > 1 ? 's' : ''}</span>
         </div>
         {isWinner && <span className="text-xs bg-emerald-600 text-white rounded-full px-2 py-0.5">Ganador</span>}
       </div>
@@ -573,65 +582,142 @@ function ExecutionCard({ ex, winnerId }) {
         </div>
       )}
 
-      {/* Mockup Meta ad — shows the 5 elements in their actual position */}
-      <div className="border border-slate-200 rounded-md bg-white shadow-sm overflow-hidden">
+      {/* Una mockup card por creative */}
+      <div className="space-y-3">
+        {creatives.map((c, i) => (
+          <CreativeMockup key={`${c.platform}-${c.format}-${i}`} creative={c} />
+        ))}
+      </div>
 
-        {/* 1. POST COPY */}
-        {postCopy && (
-          <div className="px-3 pt-3 pb-2 text-sm text-slate-800 whitespace-pre-wrap">
-            <PostCopySection text={postCopy} variants={variants} />
+      {/* Hashtags + tone */}
+      {ex.hashtags && (
+        <div className="text-xs text-brand-600">
+          {(Array.isArray(ex.hashtags) ? ex.hashtags : []).map((h) => `${String(h).startsWith('#') ? '' : '#'}${String(h).replace(/^#/, '')}`).join(' ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CHANNEL_RULES = {
+  'facebook|feed':       { post: [40, 80, 125] },
+  'instagram|feed':      { post: [100, 150, 200] },
+  'linkedin|feed':       { post: [200, 400, 600] },
+  'facebook|stories':    { post: null },
+  'instagram|stories':   { post: null },
+  'instagram|carousel':  { post: [80, 150, 220] },
+  'instagram|reel':      { post: [40, 100, 150] },
+  'tiktok|video':        { post: [40, 100, 150] },
+  'tiktok|feed':         { post: [40, 100, 150] },
+  'twitter|feed':        { post: [120, 260, 280] },
+  'youtube|video':       { post: [60, 200, 300] },
+};
+
+function CreativeMockup({ creative }) {
+  const c = creative;
+  const platformKey = String(c.platform || '').toLowerCase();
+  const formatKey = String(c.format || '').toLowerCase();
+  const isVertical = c.aspect_ratio === '9:16' || formatKey === 'stories' || formatKey === 'reel';
+  const visual = c.visual || {};
+  const overlay = c.overlay_text || null;
+
+  const postRule = CHANNEL_RULES[`${platformKey}|${formatKey}`]?.post;
+  const len = c.post_copy ? c.post_copy.length : 0;
+  let postStatus = null;
+  if (postRule && c.post_copy) {
+    const [lo, hi, max] = postRule;
+    postStatus = len > max
+      ? { color: 'text-red-600', label: 'fuera de rango' }
+      : len < lo
+        ? { color: 'text-amber-600', label: 'corto' }
+        : len > hi
+          ? { color: 'text-amber-600', label: 'largo' }
+          : { color: 'text-emerald-600', label: 'óptimo' };
+  }
+
+  const pillCls = PLATFORM_PILL[platformKey] || 'bg-slate-100 text-slate-700';
+
+  return (
+    <div className="border border-slate-200 rounded-md bg-white overflow-hidden">
+
+      {/* Tab del creativo */}
+      <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${pillCls}`}>
+            {c.platform}
+          </span>
+          {c.format && (
+            <span className="text-[10px] text-slate-500">{c.format}</span>
+          )}
+          {c.aspect_ratio && (
+            <span className="text-[10px] text-slate-400 font-mono">{c.aspect_ratio}</span>
+          )}
+        </div>
+        {c.post_copy && (
+          <div className="text-[10px] font-mono text-slate-500">
+            post: {len}c
+            {postStatus && <span className={`ml-1 ${postStatus.color}`}>· {postStatus.label}</span>}
           </div>
         )}
+      </div>
 
-        {/* 2-4. IMAGEN (con overlay y cta button) */}
-        <div className="bg-gradient-to-br from-slate-100 to-slate-200 border-y border-slate-200 p-4 flex flex-col items-center justify-center min-h-[140px] relative">
-          {overlay?.primary && (
-            <div className="text-center mb-2">
-              <div className="text-base font-bold text-slate-900 leading-tight">
-                {overlay.primary}
-              </div>
-              {overlay.secondary && (
-                <div className="text-xs text-slate-600 mt-0.5">{overlay.secondary}</div>
-              )}
-            </div>
-          )}
-          {ctaButtonText && (
-            <div className="mt-2 inline-block px-3 py-1.5 rounded bg-brand-600 text-white text-xs font-medium">
-              {ctaButtonText}
-            </div>
-          )}
-          <div className="absolute top-1.5 right-1.5 text-[9px] text-slate-400 uppercase tracking-wide">
-            Imagen
-          </div>
+      {/* 1. POST COPY */}
+      {c.post_copy && (
+        <div className="px-3 pt-3 pb-2 text-sm text-slate-800 whitespace-pre-wrap">
+          {c.post_copy}
         </div>
+      )}
 
-        {/* 5. HEADLINE + DESCRIPTION + system CTA */}
-        <div className="px-3 py-2.5 flex items-center gap-3 bg-slate-50">
-          <div className="flex-1 min-w-0">
-            {ex.headline && (
-              <div className="font-semibold text-slate-900 text-sm leading-tight truncate">
-                {ex.headline}
-              </div>
-            )}
-            {ex.description && (
-              <div className="text-xs text-slate-600 truncate">{ex.description}</div>
+      {/* 2-4. IMAGEN (con overlay y cta button) */}
+      <div className={`bg-gradient-to-br from-slate-100 to-slate-200 border-y border-slate-200 flex flex-col items-center justify-center relative ${isVertical ? 'aspect-[9/16] min-h-[280px]' : 'min-h-[150px] p-4'}`}>
+        {overlay?.primary && (
+          <div className="text-center mb-2 px-4">
+            <div className={`font-bold text-slate-900 leading-tight ${isVertical ? 'text-lg' : 'text-base'}`}>
+              {overlay.primary}
+            </div>
+            {overlay.secondary && (
+              <div className="text-xs text-slate-600 mt-1">{overlay.secondary}</div>
             )}
           </div>
-          {systemCta && (
-            <button type="button" className="text-xs px-3 py-1.5 rounded bg-slate-700 text-white whitespace-nowrap pointer-events-none">
-              {systemCta}
-            </button>
-          )}
+        )}
+        {c.cta_button && (
+          <div className="mt-2 inline-block px-4 py-2 rounded bg-brand-600 text-white text-xs font-semibold">
+            {c.cta_button}
+          </div>
+        )}
+        <div className="absolute top-1.5 right-1.5 text-[9px] text-slate-400 uppercase tracking-wide">
+          Imagen
         </div>
       </div>
 
-      {/* Visual brief — debajo del mockup */}
+      {/* 5. HEADLINE + DESCRIPTION (sólo si el formato lo soporta) */}
+      {(c.headline || c.description || c.system_cta_type) && (
+        <div className="px-3 py-2.5 flex items-center gap-3 bg-slate-50">
+          <div className="flex-1 min-w-0">
+            {c.headline && (
+              <div className="font-semibold text-slate-900 text-sm leading-tight truncate">
+                {c.headline}
+              </div>
+            )}
+            {c.description && (
+              <div className="text-xs text-slate-600 truncate">{c.description}</div>
+            )}
+          </div>
+          {c.system_cta_type && (
+            <button type="button" className="text-xs px-3 py-1.5 rounded bg-slate-700 text-white whitespace-nowrap pointer-events-none">
+              {c.system_cta_type}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Brief visual (collapsible) */}
       {(visual.main_subject || visual.main_visual || visual.scene || visual.background || visual.color_palette || visual.colors) && (
-        <details className="text-xs">
+        <details className="text-xs px-3 py-2 border-t border-slate-100">
           <summary className="cursor-pointer text-slate-500 hover:text-slate-800 select-none">
-            Brief visual completo
+            Brief visual
           </summary>
-          <div className="mt-2 space-y-1 text-slate-600 bg-slate-50 rounded p-2.5">
+          <div className="mt-2 space-y-1 text-slate-600 bg-slate-50 rounded p-2">
             <Line label="Sujeto"   value={visual.main_subject || visual.main_visual} />
             <Line label="Escena"   value={visual.scene || visual.background} />
             <Line label="Paleta"   value={visual.color_palette || visual.colors} />
@@ -641,13 +727,6 @@ function ExecutionCard({ ex, winnerId }) {
             <Line label="Persona"  value={visual.person} />
           </div>
         </details>
-      )}
-
-      {/* Hashtags */}
-      {ex.hashtags && (
-        <div className="text-xs text-brand-600">
-          {(Array.isArray(ex.hashtags) ? ex.hashtags : []).map((h) => `${String(h).startsWith('#') ? '' : '#'}${String(h).replace(/^#/, '')}`).join(' ')}
-        </div>
       )}
     </div>
   );
