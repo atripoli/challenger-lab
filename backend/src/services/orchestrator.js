@@ -3,6 +3,54 @@ const { runSkill } = require('./skillExecutor');
 
 const JSON_REMINDER = 'Devolvé exclusivamente un objeto JSON válido, sin prosa adicional ni bloques markdown.';
 
+// Pricing en USD por 1M tokens. Cache pricing del esquema ephemeral (5 min):
+// cache writes 1.25× input, cache reads 0.10× input.
+const PRICING = {
+  'claude-opus-4-6':   { input: 15, output: 75, cache_write: 18.75, cache_read: 1.50 },
+  'claude-sonnet-4-6': { input: 3,  output: 15, cache_write: 3.75,  cache_read: 0.30 },
+  'claude-haiku-4-5':  { input: 1,  output: 5,  cache_write: 1.25,  cache_read: 0.10 },
+};
+
+function calcCostUsd(usage, model) {
+  if (!usage) return 0;
+  const p = PRICING[model] || PRICING['claude-sonnet-4-6'];
+  const million = 1_000_000;
+  const inputCost      = (usage.input_tokens                  || 0) * p.input        / million;
+  const outputCost     = (usage.output_tokens                 || 0) * p.output       / million;
+  const cacheWriteCost = (usage.cache_creation_input_tokens   || 0) * p.cache_write  / million;
+  const cacheReadCost  = (usage.cache_read_input_tokens       || 0) * p.cache_read   / million;
+  return inputCost + outputCost + cacheWriteCost + cacheReadCost;
+}
+
+/**
+ * Append a usage entry to experiments.usage.skills[]. Idempotente y append-only:
+ * cada llamada agrega una fila, no reemplaza el array.
+ */
+async function recordUsage(experimentId, skillName, model, usage) {
+  if (!usage) return;
+  const entry = {
+    skill_name:                  skillName,
+    model,
+    input_tokens:                usage.input_tokens                || 0,
+    output_tokens:               usage.output_tokens               || 0,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
+    cache_read_input_tokens:     usage.cache_read_input_tokens     || 0,
+    cost_usd:                    Number(calcCostUsd(usage, model).toFixed(6)),
+    ts:                          new Date().toISOString(),
+  };
+  await pool.query(
+    `UPDATE experiments
+        SET usage = jsonb_set(
+          COALESCE(usage, '{"skills":[]}'::jsonb),
+          '{skills}',
+          COALESCE(usage->'skills', '[]'::jsonb) || $1::jsonb,
+          TRUE
+        )
+      WHERE id = $2`,
+    [JSON.stringify([entry]), experimentId],
+  );
+}
+
 /**
  * Paso 1: corre el Analyzer (skill 1) y deja el experimento en `awaiting_review`.
  * El usuario revisa/edita ángulos y selecciona N (1-5) para continuar.
@@ -190,7 +238,8 @@ async function stepAnalyzeAngles(ctx) {
     },
   ];
 
-  const { parsed } = await runSkill('product_insights_analyzer', userBlocks);
+  const { parsed, usage, model } = await runSkill('product_insights_analyzer', userBlocks);
+  await recordUsage(ctx.id, 'product_insights_analyzer', model, usage);
 
   if (!Array.isArray(parsed.angles) || parsed.angles.length !== 5) {
     throw new Error(`Analyzer devolvió ${parsed.angles?.length ?? 0} ángulos (se esperaban 5)`);
@@ -222,7 +271,8 @@ async function stepOptimizeAngles(ctx, angles) {
     `## nudges_library (usar exclusivamente estos nudge_id; ${nudges.length} nudges disponibles)\n${JSON.stringify(nudges)}`,
   ];
 
-  const { parsed } = await runSkill('behavioral_science_optimizer', userBlocks, { cachedSystemBlocks });
+  const { parsed, usage, model } = await runSkill('behavioral_science_optimizer', userBlocks, { cachedSystemBlocks });
+  await recordUsage(ctx.id, 'behavioral_science_optimizer', model, usage);
   if (!Array.isArray(parsed.optimized_angles)) {
     throw new Error('Optimizer no devolvió `optimized_angles` como array');
   }
@@ -259,7 +309,8 @@ async function stepCreateExecutions(ctx, optimizedAngles) {
   const cachedSystemBlocks = [
     `## templates_library\n${JSON.stringify(templates)}`,
   ];
-  const { parsed } = await runSkill('ogilvy_creative_execution', userBlocks, { cachedSystemBlocks });
+  const { parsed, usage, model } = await runSkill('ogilvy_creative_execution', userBlocks, { cachedSystemBlocks });
+  await recordUsage(ctx.id, 'ogilvy_creative_execution', model, usage);
   if (!Array.isArray(parsed.executions)) {
     throw new Error('Ogilvy skill no devolvió `executions` como array');
   }
@@ -312,7 +363,8 @@ async function stepScoreExecutions(ctx, executions) {
   const cachedSystemBlocks = [
     `## scoring_criteria (pesos ya suman 1.00)\n${JSON.stringify(criteria)}`,
   ];
-  const { parsed } = await runSkill('performance_scorer', userBlocks, { cachedSystemBlocks });
+  const { parsed, usage, model } = await runSkill('performance_scorer', userBlocks, { cachedSystemBlocks });
+  await recordUsage(ctx.id, 'performance_scorer', model, usage);
 
   const challenger_scores = parsed.challenger_scores ?? parsed.scores;
   if (!Array.isArray(challenger_scores)) {

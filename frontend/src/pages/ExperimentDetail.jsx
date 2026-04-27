@@ -139,10 +139,60 @@ export default function ExperimentDetail() {
         </div>
       </section>
 
+      {exp.usage && Array.isArray(exp.usage.skills) && exp.usage.skills.length > 0 && (
+        <UsagePanel usage={exp.usage} />
+      )}
+
       {exp.status === 'completed' && (
         <ResultsBlock experiment={exp} />
       )}
     </div>
+  );
+}
+
+function UsagePanel({ usage }) {
+  const skills = usage.skills || [];
+  const totalCost = skills.reduce((s, x) => s + (Number(x.cost_usd) || 0), 0);
+  const totalInput = skills.reduce((s, x) => s + (x.input_tokens || 0) + (x.cache_creation_input_tokens || 0) + (x.cache_read_input_tokens || 0), 0);
+  const totalOutput = skills.reduce((s, x) => s + (x.output_tokens || 0), 0);
+  const totalCacheRead = skills.reduce((s, x) => s + (x.cache_read_input_tokens || 0), 0);
+  const cachePct = totalInput > 0 ? (totalCacheRead / totalInput) * 100 : 0;
+
+  return (
+    <details className="bg-white border border-slate-200 rounded-lg p-4">
+      <summary className="cursor-pointer text-sm font-medium text-slate-700 select-none flex items-center justify-between">
+        <span>Costo API de este experimento</span>
+        <span className="text-slate-500 font-mono text-xs">
+          USD {totalCost.toFixed(4)} · {(totalInput + totalOutput).toLocaleString('es-AR')} tokens · {cachePct.toFixed(1)}% cache hit
+        </span>
+      </summary>
+      <table className="w-full text-xs mt-3">
+        <thead className="bg-slate-50 text-slate-600">
+          <tr>
+            <th className="px-2 py-1.5 text-left">Skill</th>
+            <th className="px-2 py-1.5 text-left">Modelo</th>
+            <th className="px-2 py-1.5 text-right">Input</th>
+            <th className="px-2 py-1.5 text-right">Output</th>
+            <th className="px-2 py-1.5 text-right">Cache read</th>
+            <th className="px-2 py-1.5 text-right">Cache write</th>
+            <th className="px-2 py-1.5 text-right">Costo USD</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {skills.map((s, i) => (
+            <tr key={i}>
+              <td className="px-2 py-1.5 font-mono">{s.skill_name}</td>
+              <td className="px-2 py-1.5 font-mono">{s.model}</td>
+              <td className="px-2 py-1.5 text-right">{(s.input_tokens || 0).toLocaleString('es-AR')}</td>
+              <td className="px-2 py-1.5 text-right">{(s.output_tokens || 0).toLocaleString('es-AR')}</td>
+              <td className="px-2 py-1.5 text-right text-emerald-600">{(s.cache_read_input_tokens || 0).toLocaleString('es-AR')}</td>
+              <td className="px-2 py-1.5 text-right">{(s.cache_creation_input_tokens || 0).toLocaleString('es-AR')}</td>
+              <td className="px-2 py-1.5 text-right font-semibold">{Number(s.cost_usd || 0).toFixed(4)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
   );
 }
 

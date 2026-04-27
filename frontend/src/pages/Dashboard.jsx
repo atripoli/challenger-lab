@@ -36,7 +36,7 @@ export default function Dashboard() {
   if (error) return <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md p-3">{error}</div>;
   if (!stats) return null;
 
-  const { totals, uplift, winning_categories, platform_predictions, recent_completed, pipeline_duration, calibration, results_aggregate } = stats;
+  const { totals, uplift, winning_categories, platform_predictions, recent_completed, pipeline_duration, calibration, results_aggregate, api_cost } = stats;
   const isEmpty = totals.experiments === 0;
 
   return (
@@ -75,6 +75,10 @@ export default function Dashboard() {
 
           <UpliftDistribution uplift={uplift} />
 
+          {api_cost && api_cost.n_experiments_with_usage > 0 && (
+            <ApiCostPanel apiCost={api_cost} />
+          )}
+
           {calibration && calibration.n > 0 && (
             <CalibrationPanel calibration={calibration} resultsAgg={results_aggregate} />
           )}
@@ -84,6 +88,88 @@ export default function Dashboard() {
       )}
     </div>
   );
+}
+
+function ApiCostPanel({ apiCost }) {
+  const totalInput = apiCost.total_input_tokens + apiCost.total_cache_read + apiCost.total_cache_creation;
+  const cachePct = totalInput > 0
+    ? (apiCost.total_cache_read / totalInput) * 100
+    : 0;
+  // Sin cache, los tokens cache_read se hubieran cobrado al precio normal de input.
+  // Estimamos savings como cache_read × (1 - 0.10) × price del modelo más usado.
+  // Aproximación rough: usamos un blended rate de $2/1M input.
+  const estimatedSavings = (apiCost.total_cache_read / 1_000_000) * 2 * 0.9;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-sm font-medium text-slate-700">Costo API Anthropic</h3>
+        <span className="text-[11px] text-slate-500">
+          {apiCost.n_skill_calls} llamadas en {apiCost.n_experiments_with_usage} experimento{apiCost.n_experiments_with_usage !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center mb-4">
+        <Stat
+          label="Costo total"
+          value={`USD ${apiCost.total_cost_usd.toFixed(2)}`}
+        />
+        <Stat
+          label="Costo promedio por experimento"
+          value={`USD ${apiCost.avg_cost_per_experiment.toFixed(3)}`}
+        />
+        <Stat
+          label="Tokens cacheados (lectura)"
+          value={fmtTokens(apiCost.total_cache_read)}
+          positive={cachePct > 20}
+        />
+        <Stat
+          label="% cache hit"
+          value={`${cachePct.toFixed(1)}%`}
+          positive={cachePct > 20}
+        />
+      </div>
+
+      {apiCost.by_model.length > 0 && (
+        <div className="border-t border-slate-100 pt-3">
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Por modelo</div>
+          <div className="space-y-1.5 text-sm">
+            {apiCost.by_model.map((m) => {
+              const totalCost = apiCost.total_cost_usd || 1;
+              const pct = (m.cost_usd / totalCost) * 100;
+              return (
+                <div key={m.model}>
+                  <div className="flex items-baseline justify-between text-xs mb-0.5">
+                    <span className="text-slate-700 font-mono">{m.model}</span>
+                    <span className="text-slate-500">
+                      {m.n_calls} llamadas · {fmtTokens(m.input_tokens + m.output_tokens)} tok ·{' '}
+                      <span className="font-semibold text-slate-700">USD {Number(m.cost_usd).toFixed(3)}</span>
+                    </span>
+                  </div>
+                  <div className="bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="h-full bg-brand-500" style={{ width: `${Math.max(2, pct)}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {cachePct > 5 && (
+        <div className="mt-3 text-xs text-emerald-700 text-center">
+          ✓ Prompt caching activo — ahorraste ~USD {estimatedSavings.toFixed(3)} estimados sobre {fmtTokens(apiCost.total_cache_read)} tokens leídos del cache.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtTokens(n) {
+  if (n == null) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
 }
 
 function CalibrationPanel({ calibration, resultsAgg }) {

@@ -20,6 +20,8 @@ router.get(
       pipelineDuration,
       calibration,
       resultsAgg,
+      apiCost,
+      apiCostByModel,
     ] = await Promise.all([
       pool.query(
         `SELECT status, COUNT(*)::int AS n
@@ -102,6 +104,34 @@ router.get(
                 MAX(currency) AS currency
            FROM experiment_results`,
       ),
+      // Costo total de Anthropic API
+      pool.query(
+        `SELECT
+           SUM((s->>'cost_usd')::numeric)::numeric(10,4)                  AS total_cost_usd,
+           SUM((s->>'input_tokens')::int)::int                            AS total_input_tokens,
+           SUM((s->>'output_tokens')::int)::int                           AS total_output_tokens,
+           SUM((s->>'cache_read_input_tokens')::int)::int                 AS total_cache_read,
+           SUM((s->>'cache_creation_input_tokens')::int)::int             AS total_cache_creation,
+           COUNT(DISTINCT e.id)::int                                       AS n_experiments_with_usage,
+           COUNT(*)::int                                                   AS n_skill_calls
+           FROM experiments e,
+                jsonb_array_elements(e.usage->'skills') s
+          WHERE e.deleted_at IS NULL`,
+      ),
+      // Costo por modelo
+      pool.query(
+        `SELECT s->>'model'                                              AS model,
+                COUNT(*)::int                                            AS n_calls,
+                SUM((s->>'cost_usd')::numeric)::numeric(10,4)            AS cost_usd,
+                SUM((s->>'input_tokens')::int)::int                      AS input_tokens,
+                SUM((s->>'output_tokens')::int)::int                     AS output_tokens,
+                SUM((s->>'cache_read_input_tokens')::int)::int           AS cache_read_tokens
+           FROM experiments e,
+                jsonb_array_elements(e.usage->'skills') s
+          WHERE e.deleted_at IS NULL
+          GROUP BY s->>'model'
+          ORDER BY cost_usd DESC NULLS LAST`,
+      ),
     ]);
 
     // Totales por status
@@ -153,6 +183,26 @@ router.get(
         n_experiments_with_results: resultsAgg.rows[0].n_experiments_with_results,
         total_budget:               resultsAgg.rows[0].total_budget != null ? Number(resultsAgg.rows[0].total_budget) : null,
         currency:                   resultsAgg.rows[0].currency,
+      },
+      api_cost: {
+        total_cost_usd:             apiCost.rows[0].total_cost_usd != null ? Number(apiCost.rows[0].total_cost_usd) : 0,
+        total_input_tokens:         apiCost.rows[0].total_input_tokens     ?? 0,
+        total_output_tokens:        apiCost.rows[0].total_output_tokens    ?? 0,
+        total_cache_read:           apiCost.rows[0].total_cache_read       ?? 0,
+        total_cache_creation:       apiCost.rows[0].total_cache_creation   ?? 0,
+        n_experiments_with_usage:   apiCost.rows[0].n_experiments_with_usage ?? 0,
+        n_skill_calls:              apiCost.rows[0].n_skill_calls          ?? 0,
+        avg_cost_per_experiment:    apiCost.rows[0].n_experiments_with_usage > 0
+          ? Number(apiCost.rows[0].total_cost_usd) / apiCost.rows[0].n_experiments_with_usage
+          : 0,
+        by_model: apiCostByModel.rows.map((r) => ({
+          model:             r.model,
+          n_calls:           r.n_calls,
+          cost_usd:          r.cost_usd != null ? Number(r.cost_usd) : 0,
+          input_tokens:      r.input_tokens      ?? 0,
+          output_tokens:     r.output_tokens     ?? 0,
+          cache_read_tokens: r.cache_read_tokens ?? 0,
+        })),
       },
     });
   }),
