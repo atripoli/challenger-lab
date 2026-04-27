@@ -41,10 +41,17 @@ export default function ExperimentExport() {
   const winnerNum = exp.winner_payload?.angle_number;
   const winnerAngle = angles.find((a) => a.angle_number === winnerNum);
 
-  // Mostrar solo los ángulos que se procesaron (selected) o todos si no hubo selección
-  const processedAngles = selected.size > 0
+  // En el reporte de entrega solo aparecen los ángulos seleccionados (los 2 que
+  // se llevaron a producción). Los descartados quedan sólo en la app interna.
+  const selectedAngles = selected.size > 0
     ? angles.filter((a) => selected.has(a.angle_number))
     : angles;
+
+  // El detalle creativo de ejecución solo muestra el ganador (el "aviso final"
+  // que efectivamente se va a producir).
+  const winnerExecution = winnerNum != null
+    ? executions.find((e) => e.angle_number === winnerNum)
+    : null;
 
   return (
     <div className="bg-white text-slate-900 min-h-screen">
@@ -81,28 +88,36 @@ export default function ExperimentExport() {
           </div>
         </Section>
 
-        {/* ÁNGULOS */}
-        <Section title="Ángulos estratégicos">
+        {/* ÁNGULOS — solo los seleccionados */}
+        <Section title="Ángulos seleccionados">
           <div className="space-y-3">
-            {angles.map((a) => (
-              <AngleRow key={a.angle_number} angle={a} isSelected={selected.has(a.angle_number)} isWinner={a.angle_number === winnerNum} />
+            {selectedAngles.map((a) => (
+              <AngleRow
+                key={a.angle_number}
+                angle={a}
+                isSelected={true}
+                isWinner={a.angle_number === winnerNum}
+              />
             ))}
           </div>
         </Section>
 
-        {/* SCORING */}
+        {/* SCORING — Champion vs los 2 seleccionados */}
         {scores.length > 0 && (
           <Section title="Performance scoring">
             <ScoringTable scores={scores} winnerNum={winnerNum} championScore={exp.champion_score} />
           </Section>
         )}
 
-        {/* EJECUCIONES CREATIVAS POR ÁNGULO */}
-        {processedAngles.map((a) => {
-          const ex = executions.find((e) => e.angle_number === a.angle_number);
-          if (!ex) return null;
-          return <ExecutionDetail key={a.angle_number} angle={a} execution={ex} isWinner={a.angle_number === winnerNum} />;
-        })}
+        {/* EJECUCIÓN FINAL — solo el ganador */}
+        {winnerExecution && winnerAngle && (
+          <ExecutionDetail
+            angle={winnerAngle}
+            execution={winnerExecution}
+            isWinner={true}
+            sectionTitle="Aviso final · ganador"
+          />
+        )}
 
         {/* FOOTER */}
         <div className="text-xs text-slate-400 text-center pt-6 border-t border-slate-200">
@@ -296,14 +311,14 @@ function ScoringTable({ scores, winnerNum, championScore }) {
   );
 }
 
-function ExecutionDetail({ angle, execution, isWinner }) {
+function ExecutionDetail({ angle, execution, isWinner, sectionTitle }) {
   const creatives = Array.isArray(execution.creatives) ? execution.creatives : [];
   return (
     <div className="break-before-page pt-4 space-y-4">
       <div className="border-b border-slate-200 pb-3">
         <div className="text-xs uppercase tracking-widest text-slate-500">
-          Ejecución creativa · ángulo #{angle.angle_number}
-          {isWinner && <span className="ml-2 text-emerald-700 font-semibold">(ganador)</span>}
+          {sectionTitle || `Ejecución creativa · ángulo #${angle.angle_number}`}
+          {isWinner && !sectionTitle && <span className="ml-2 text-emerald-700 font-semibold">(ganador)</span>}
         </div>
         <h2 className="text-2xl font-bold text-slate-900 mt-1">{angle.angle_name}</h2>
         {execution.big_idea && (
