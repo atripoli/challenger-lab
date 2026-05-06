@@ -896,7 +896,12 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  const brief = existingBrief?.brief?.image_brief || null;
+  // El backend guarda el brief plano en existingBrief.brief (con
+  // final_nano_banana_prompt en la raíz). Mantenemos fallback al schema
+  // anidado .image_brief por si quedaron registros legacy editados.
+  const brief = existingBrief?.brief?.final_nano_banana_prompt
+    ? existingBrief.brief
+    : (existingBrief?.brief?.image_brief || existingBrief?.brief || null);
   const dirty = draft != null;
   const hasImage = !!existingBrief?.image_url;
 
@@ -920,8 +925,9 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
   async function handleSave() {
     setError(null);
     try {
+      // Guardar plano (mismo schema que produce imageBriefWriter).
       await api.put(`/api/experiments/${experimentId}/briefs/${existingBrief.id}`, {
-        brief: { image_brief: draft },
+        brief: draft,
       });
       setDraft(null);
       setEditing(false);
