@@ -52,6 +52,36 @@ async function uploadFile(path, file, fieldName = 'image') {
   return data;
 }
 
+// Descarga binaria con auth → dispara el "Save as..." del browser usando
+// un blob URL. Toma el filename del header Content-Disposition si está,
+// si no usa el fallback que le pases.
+async function downloadFile(path, fallbackName = 'download.bin') {
+  const token = getToken();
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let msg = `HTTP ${res.status}`;
+    try { msg = JSON.parse(text)?.error || msg; } catch (_) {}
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  const cd = res.headers.get('content-disposition') || '';
+  const m = /filename="?([^"]+)"?/i.exec(cd);
+  const name = m?.[1] || fallbackName;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const api = {
   get:    (p)    => request(p),
   post:   (p, b) => request(p, { method: 'POST',  body: b }),
@@ -59,4 +89,5 @@ export const api = {
   patch:  (p, b) => request(p, { method: 'PATCH', body: b }),
   del:    (p)    => request(p, { method: 'DELETE' }),
   upload: uploadFile,
+  download: downloadFile,
 };

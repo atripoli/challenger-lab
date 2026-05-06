@@ -5,6 +5,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { generateBrief, listBriefs, updateBrief } = require('../services/imageBriefWriter');
 const { generateImageForBrief, COST_PER_IMAGE_USD } = require('../services/imageGenerator');
+const { streamPack } = require('../services/briefPack');
 
 const router = express.Router({ mergeParams: true });
 router.use(requireAuth);
@@ -78,6 +79,26 @@ router.post(
         : /GEMINI_API_KEY/.test(err.message)         ? 503
         : 500;
       res.status(status).json({ error: err.message });
+    }
+  }),
+);
+
+// GET /api/experiments/:experimentId/briefs/:briefId/pack — descarga ZIP con
+// la imagen generada + copy.txt (post copy, headline, description, CTA,
+// overlay, hashtags) listo para entregar al media buyer.
+router.get(
+  '/:briefId/pack',
+  asyncHandler(async (req, res) => {
+    try {
+      await streamPack(Number(req.params.briefId), res);
+    } catch (err) {
+      // Si ya empezamos a stremear, no podemos cambiar el status. Cerramos y log.
+      if (res.headersSent) {
+        console.error('[briefs/pack] error mid-stream', err);
+        try { res.end(); } catch (_) {}
+      } else {
+        res.status(500).json({ error: err.message });
+      }
     }
   }),
 );

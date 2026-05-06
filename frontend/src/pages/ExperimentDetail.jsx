@@ -1140,9 +1140,22 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
                   {existingBrief.image_model} · USD {Number(existingBrief.image_cost_usd || 0).toFixed(3)} ·{' '}
                   {existingBrief.image_generated_at ? new Date(existingBrief.image_generated_at).toLocaleString('es-AR') : ''}
                 </span>
-                <a href={existingBrief.image_url} download className="text-emerald-700 hover:underline">
-                  Descargar
-                </a>
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.download(
+                        `/api/experiments/${experimentId}/briefs/${existingBrief.id}/pack`,
+                        `brief-${existingBrief.id}-${existingBrief.platform}-${existingBrief.format}.zip`,
+                      );
+                    } catch (err) {
+                      setError(err.message);
+                    }
+                  }}
+                  className="text-emerald-700 hover:underline"
+                  title="ZIP con la imagen + copy.txt (post copy, headline, CTA, etc.)"
+                >
+                  Descargar pack
+                </button>
               </div>
               {existingBrief.is_stale && (
                 <div className="mt-2 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">
