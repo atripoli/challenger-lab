@@ -95,7 +95,10 @@ async function generateImageForBrief(briefId) {
   const brief = rows[0];
   if (!brief) throw new Error('Brief no encontrado');
 
-  const prompt = brief.brief?.image_brief?.final_nano_banana_prompt;
+  // El brief guarda el prompt en la raíz del JSONB (no anidado en image_brief).
+  const prompt =
+    brief.brief?.final_nano_banana_prompt ||
+    brief.brief?.image_brief?.final_nano_banana_prompt;
   if (!prompt) throw new Error('Brief sin final_nano_banana_prompt');
 
   // Borrar imagen anterior de Cloudinary si existe (para no acumular huérfanas)
