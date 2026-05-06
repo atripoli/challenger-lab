@@ -205,6 +205,7 @@ const anglesPatchSchema = z.object({
   angles: z.array(z.object({ angle_number: z.number().int().positive() }).passthrough()).min(1).max(5),
 });
 
+
 // PATCH /api/experiments/:id/angles — guarda edits humanos sobre los 5 ángulos.
 router.patch(
   '/:id/angles',
@@ -222,6 +223,7 @@ router.patch(
     }
   }),
 );
+
 
 const continueSchema = z.object({
   selected_angle_numbers: z.array(z.number().int().positive()).min(1).max(5),
@@ -339,6 +341,21 @@ router.patch(
       `UPDATE experiments SET executions = $1::jsonb, updated_at = NOW() WHERE id = $2`,
       [JSON.stringify(executions), expId],
     );
+
+    // Si existe un brief para ese creative, marcarlo como desactualizado:
+    // el copy / overlay / etc. del creative cambió, así que el final_nano_banana_prompt
+    // y el resto del brief ya no representan lo que se va a producir.
+    await pool.query(
+      `UPDATE creative_image_briefs
+          SET is_stale   = TRUE,
+              updated_at = NOW()
+        WHERE experiment_id = $1
+          AND angle_number  = $2
+          AND lower(platform) = lower($3)
+          AND lower(format)   = lower($4)`,
+      [expId, data.angle_number, data.platform, data.format],
+    );
+
     res.json({ success: true });
   }),
 );

@@ -229,9 +229,7 @@ async function stepAnalyzeAngles(ctx) {
         ctx.historical_data ? JSON.stringify(ctx.historical_data, null, 2) : '(sin histórico cargado)',
         '',
         '## previously_explored_angles',
-        previousAngles.length > 0
-          ? `Ya se generaron ${previousAngles.length} ángulos en experimentos anteriores de este producto. NO los recicles ni con paráfrasis. Buscá insights frescos.\n${JSON.stringify(previousAngles, null, 2)}`
-          : '(sin ángulos previos — primer experimento sobre este producto)',
+        formatPreviousAngles(previousAngles),
         '',
         JSON_REMINDER,
       ].join('\n'),
@@ -520,7 +518,126 @@ async function loadParentAngles(parentExperimentId) {
   return angles.map((a, i) => ({ ...a, angle_number: a.angle_number ?? i + 1 }));
 }
 
-async function loadPreviousAngles(productId, currentExperimentId, limit = 30) {
+/**
+ * Carga el histórico de ángulos del producto, etiquetando cada uno con su
+ * status: winner | selected | discarded. Usado por el Analyzer para evitar
+ * recicado y por la UI (GET /api/products/:id/angle-history) para
+ * transparencia. Deduplica por nombre normalizado priorizando el status más
+ * fuerte (winner > selected > discarded) y la aparición más reciente.
+ */
+async function loadAngleHistory(productId, excludeExperimentId = null, limit = 60) {
+  const params = [productId, limit];
+  let exclude = '';
+  if (excludeExperimentId != null) {
+    params.push(excludeExperimentId);
+    exclude = ` AND e.id != $${params.length}`;
+  }
+  const { rows } = await pool.query(
+    `SELECT e.id   AS experiment_id,
+            e.name AS experiment_name,
+            e.created_at,
+            e.selected_angle_numbers,
+            e.winner_payload->>'angle_number' AS winner_angle_number,
+            angle
+       FROM experiments e,
+            jsonb_array_elements(e.angles) angle
+      WHERE e.product_id = $1
+        AND e.deleted_at IS NULL
+        AND e.angles IS NOT NULL
+        AND e.status != 'failed'
+        ${exclude}
+      ORDER BY e.created_at DESC
+      LIMIT $2`,
+    params,
+  );
+
+  const RANK = { winner: 3, selected: 2, discarded: 1 };
+  const seen = new Map();
+
+  for (const r of rows) {
+    const a = r.angle;
+    const name = (a?.angle_name || '').toLowerCase().trim();
+    if (!name) continue;
+
+    const angleNum = Number(a.angle_number);
+    const winnerNum = Number(r.winner_angle_number);
+    const selectedSet = new Set(
+      Array.isArray(r.selected_angle_numbers) ? r.selected_angle_numbers.map(Number) : [],
+    );
+    let status;
+    if (Number.isFinite(winnerNum) && angleNum === winnerNum) status = 'winner';
+    else if (selectedSet.size === 0 || selectedSet.has(angleNum)) status = 'selected';
+    else status = 'discarded';
+
+    const cand = {
+      angle_name:      a.angle_name,
+      category:        a.category,
+      insight:         a.insight,
+      benefit:         a.benefit,
+      status,
+      experiment_id:   r.experiment_id,
+      experiment_name: r.experiment_name,
+      created_at:      r.created_at,
+    };
+
+    const ex = seen.get(name);
+    if (!ex || RANK[cand.status] > RANK[ex.status]) seen.set(name, cand);
+  }
+  return Array.from(seen.values());
+}
+
+/** Wrapper retro-compat para el Analyzer: excluye el experimento actual. */
+async function loadPreviousAngles(productId, currentExperimentId, limit = 60) {
+  return loadAngleHistory(productId, currentExperimentId, limit);
+}
+
+/**
+ * Formatea el histórico de ángulos en bloques agrupados por status para
+ * que el Analyzer pueda darle el peso correcto a cada uno. La señal es
+ * MUY distinta entre un ángulo descartado (insight que no resonó) y un
+ * ángulo ganador (insight validado por scoring).
+ */
+function formatPreviousAngles(history) {
+  if (!Array.isArray(history) || history.length === 0) {
+    return '(sin ángulos previos — primer experimento sobre este producto)';
+  }
+  const winners   = history.filter((a) => a.status === 'winner');
+  const selected  = history.filter((a) => a.status === 'selected');
+  const discarded = history.filter((a) => a.status === 'discarded');
+
+  const compact = (a) => ({
+    angle_name: a.angle_name,
+    category:   a.category,
+    insight:    a.insight,
+    benefit:    a.benefit,
+  });
+
+  const lines = [];
+  lines.push(`Histórico de ${history.length} ángulos previos en este producto.`);
+  lines.push('');
+
+  if (winners.length) {
+    lines.push(`### GANADORES (${winners.length}) — ya validados por scoring. Si proponés algo cercano, justificá por qué vale re-testearlo.`);
+    lines.push(JSON.stringify(winners.map(compact), null, 2));
+    lines.push('');
+  }
+  if (selected.length) {
+    lines.push(`### SELECCIONADOS QUE NO GANARON (${selected.length}) — fueron procesados pero scoring no los eligió. Evitá repetir el mismo insight; podés explorar territorios cercanos si encontrás un ángulo distinto.`);
+    lines.push(JSON.stringify(selected.map(compact), null, 2));
+    lines.push('');
+  }
+  if (discarded.length) {
+    lines.push(`### DESCARTADOS (${discarded.length}) — el usuario los descartó en revisión humana. Señal fuerte de que el insight no convencía. NO repitas estos ángulos ni con paráfrasis.`);
+    lines.push(JSON.stringify(discarded.map(compact), null, 2));
+    lines.push('');
+  }
+  lines.push('REGLA: los 5 ángulos nuevos deben ser genuinamente distintos a TODOS los anteriores (winners, selected, descartados). El registro de status arriba es solo para que sepas el peso de cada repetición; ninguno debe ser reciclado.');
+  return lines.join('\n');
+}
+
+// La función de abajo (originalmente loadPreviousAngles plana) queda como
+// fallback histórico en caso de que un caller quiera la versión sin status.
+async function loadPreviousAngles_legacy(productId, currentExperimentId, limit = 30) {
   const { rows } = await pool.query(
     `SELECT angle->>'angle_name' AS angle_name,
             angle->>'category'   AS category,
@@ -537,7 +654,6 @@ async function loadPreviousAngles(productId, currentExperimentId, limit = 30) {
       LIMIT $3`,
     [productId, currentExperimentId, limit],
   );
-  // Deduplicar por nombre normalizado (case-insensitive, sin espacios extra)
   const seen = new Set();
   const out = [];
   for (const r of rows) {
@@ -592,6 +708,7 @@ module.exports = {
   runAnalyzer,
   continueExperiment,
   patchAngles,
+  loadAngleHistory,
   // alias para retro-compat: el endpoint /run ahora corre solo el analyzer
   runExperiment: runAnalyzer,
 };

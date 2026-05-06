@@ -4,9 +4,25 @@ const { z } = require('zod');
 const { pool } = require('../config/db');
 const asyncHandler = require('../middleware/asyncHandler');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { loadAngleHistory } = require('../services/orchestrator');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// GET /api/products/:id/angle-history — devuelve los ángulos generados en
+// experimentos previos de este producto, etiquetados por status
+// (winner/selected/discarded). Usado por la UI para que el usuario tenga
+// transparencia sobre qué le va a llegar al Analyzer cuando cree el próximo
+// experimento.
+router.get(
+  '/:id/angle-history',
+  asyncHandler(async (req, res) => {
+    const productId = Number(req.params.id);
+    if (!Number.isFinite(productId)) return res.status(400).json({ error: 'Producto inválido' });
+    const history = await loadAngleHistory(productId, null, 60);
+    res.json({ history });
+  }),
+);
 
 const productSchema = z.object({
   client_id:       z.number().int().positive(),

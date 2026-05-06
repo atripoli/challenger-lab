@@ -718,9 +718,13 @@ const CHANNEL_RULES = {
   'youtube|video':       { post: [60, 200, 300] },
 };
 
-function CreativeMockup({ creative, experimentId, angleNumber, isWinner, brief, onBriefsChange }) {
+function CreativeMockup({ creative, experimentId, angleNumber, isWinner, brief, onBriefsChange, onCreativeChange }) {
   const c = creative;
   const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+
   const platformKey = String(c.platform || '').toLowerCase();
   const formatKey = String(c.format || '').toLowerCase();
   const isVertical = c.aspect_ratio === '9:16' || formatKey === 'stories' || formatKey === 'reel';
@@ -985,10 +989,15 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
   return (
     <details open className="border-t border-slate-100 px-3 py-3 bg-emerald-50/30 text-xs">
       <summary className="cursor-pointer flex items-center justify-between gap-2 select-none">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-slate-700">Brief para imagen final</span>
           {existingBrief?.is_edited && (
             <span className="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">editado</span>
+          )}
+          {existingBrief?.is_stale && (
+            <span className="text-[10px] bg-red-100 text-red-700 rounded px-1.5 py-0.5">
+              ⚠ desactualizado
+            </span>
           )}
         </div>
         <div className="flex gap-2">
@@ -1006,6 +1015,14 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
           </button>
         </div>
       </summary>
+
+      {existingBrief?.is_stale && !editing && (
+        <div className="mt-2 bg-red-50 border border-red-200 text-red-800 text-[11px] rounded p-2">
+          El creative subyacente cambió desde que se generó este brief (post copy / overlay / CTA / etc.).
+          El <code>final_nano_banana_prompt</code> y los demás campos pueden no reflejar el copy actualizado.
+          Click <b>Regenerar</b> para reconstruir el brief con los valores nuevos.
+        </div>
+      )}
 
       <div className="mt-3 space-y-3">
         {/* Resumen narrativo */}

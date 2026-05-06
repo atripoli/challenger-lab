@@ -28,6 +28,7 @@ export default function ExperimentNew() {
   const [error, setError] = useState(null);
   const [historyCount, setHistoryCount] = useState(null);
   const [productExperiments, setProductExperiments] = useState([]);
+  const [angleHistory, setAngleHistory] = useState(null);
 
   useEffect(() => {
     api.get('/api/products').then((d) => setProducts(d.products));
@@ -58,6 +59,12 @@ export default function ExperimentNew() {
         .map((o) => ({ platform: o.platform, format: o.flagship }));
       return { ...f, channels: seeded };
     });
+
+    // Cargar histórico de ángulos del producto (con status) para mostrar
+    // transparencia de lo que el Analyzer va a recibir como input.
+    api.get(`/api/products/${selectedProduct.id}/angle-history`)
+      .then((d) => setAngleHistory(d.history))
+      .catch(() => setAngleHistory(null));
 
     // Cargar experimentos previos del mismo producto que tengan ángulos generados,
     // para mostrarlos como posibles parents en el picker de iteración.
@@ -149,6 +156,10 @@ export default function ExperimentNew() {
       </Field>
 
       {selectedProduct && <ProductBriefPanel product={selectedProduct} historyCount={historyCount} />}
+
+      {selectedProduct && angleHistory && angleHistory.length > 0 && (
+        <AngleHistoryPanel history={angleHistory} />
+      )}
 
       {selectedProduct && productExperiments.length > 0 && (
         <Field
@@ -276,6 +287,77 @@ function Row({ label, value }) {
       <span className="text-slate-700 whitespace-pre-wrap">
         {value || <i className="text-slate-400">(vacío)</i>}
       </span>
+    </div>
+  );
+}
+
+function AngleHistoryPanel({ history }) {
+  const winners   = history.filter((a) => a.status === 'winner');
+  const selected  = history.filter((a) => a.status === 'selected');
+  const discarded = history.filter((a) => a.status === 'discarded');
+
+  return (
+    <details className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm">
+      <summary className="cursor-pointer flex items-center justify-between gap-3 select-none">
+        <div>
+          <h3 className="font-medium text-slate-700">Histórico de ángulos en este producto</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            El Analyzer recibe estos {history.length} ángulos y va a evitar repetirlos. Click para ver el detalle.
+          </p>
+        </div>
+        <div className="flex gap-2 flex-shrink-0 text-[11px]">
+          {winners.length   > 0 && <Badge color="emerald" label={`${winners.length} ganador${winners.length > 1 ? 'es' : ''}`} />}
+          {selected.length  > 0 && <Badge color="sky"     label={`${selected.length} trabajado${selected.length > 1 ? 's' : ''}`} />}
+          {discarded.length > 0 && <Badge color="slate"   label={`${discarded.length} descartado${discarded.length > 1 ? 's' : ''}`} />}
+        </div>
+      </summary>
+
+      <div className="mt-4 space-y-4">
+        <AngleGroup title="GANADORES — validados por scoring" angles={winners} statusColor="emerald" emptyText="(ninguno aún)" />
+        <AngleGroup title="SELECCIONADOS NO-GANADORES — procesados pero no eligidos" angles={selected} statusColor="sky" emptyText="(ninguno)" />
+        <AngleGroup title="DESCARTADOS — el equipo los descartó en revisión" angles={discarded} statusColor="slate" emptyText="(ninguno)" />
+      </div>
+    </details>
+  );
+}
+
+function Badge({ color, label }) {
+  const cls = {
+    emerald: 'bg-emerald-100 text-emerald-700',
+    sky:     'bg-sky-100 text-sky-700',
+    slate:   'bg-slate-200 text-slate-700',
+  }[color] || 'bg-slate-100 text-slate-700';
+  return <span className={`px-2 py-0.5 rounded-full ${cls}`}>{label}</span>;
+}
+
+function AngleGroup({ title, angles, statusColor, emptyText }) {
+  const cls = {
+    emerald: 'border-l-emerald-400',
+    sky:     'border-l-sky-400',
+    slate:   'border-l-slate-400',
+  }[statusColor] || 'border-l-slate-400';
+
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5">{title}</div>
+      {angles.length === 0 ? (
+        <div className="text-xs text-slate-400 italic">{emptyText}</div>
+      ) : (
+        <ul className="space-y-2">
+          {angles.map((a, i) => (
+            <li key={`${a.experiment_id}-${a.angle_name}-${i}`} className={`bg-white border border-slate-200 ${cls} border-l-4 rounded p-2.5 text-xs`}>
+              <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                <span className="font-medium text-slate-900">{a.angle_name}</span>
+                <span className="text-[10px] text-slate-400">
+                  exp #{a.experiment_id} · {a.experiment_name}
+                </span>
+              </div>
+              {a.category && <span className="text-[10px] text-slate-500 mr-2">{a.category.replace(/_/g, ' ')}</span>}
+              {a.insight  && <div className="text-slate-600 mt-1">{a.insight}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
