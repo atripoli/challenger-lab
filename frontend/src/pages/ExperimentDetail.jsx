@@ -16,6 +16,7 @@ const CATEGORY_COLOR = {
 export default function ExperimentDetail() {
   const { id } = useParams();
   const [exp, setExp] = useState(null);
+  const [briefs, setBriefs] = useState([]);
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(false);
   const pollRef = useRef(null);
@@ -30,7 +31,17 @@ export default function ExperimentDetail() {
     }
   }
 
-  useEffect(() => { load(); }, [id]);
+  async function loadBriefs() {
+    try {
+      const { briefs } = await api.get(`/api/experiments/${id}/briefs`);
+      setBriefs(briefs);
+    } catch {/* silencio: si el endpoint no existe en algún env, no bloquear */}
+  }
+
+  useEffect(() => {
+    load();
+    loadBriefs();
+  }, [id]);
 
   useEffect(() => {
     if (!exp) return;
@@ -144,7 +155,15 @@ export default function ExperimentDetail() {
         <div className="space-y-6">
           {!isAwaitingReview && exp.angles && <AnglesBlock angles={exp.angles} selected={exp.selected_angle_numbers} />}
           {exp.optimized_angles  && <OptimizedBlock   items={exp.optimized_angles} />}
-          {exp.executions        && <ExecutionsBlock  executions={exp.executions} winnerId={exp.winner_id} />}
+          {exp.executions && (
+            <ExecutionsBlock
+              executions={exp.executions}
+              winnerId={exp.winner_id}
+              experimentId={exp.id}
+              briefs={briefs}
+              onBriefsChange={loadBriefs}
+            />
+          )}
           {exp.scores            && <ScoresBlock      scores={exp.scores} winnerId={exp.winner_id} champion={exp.champion_score} />}
         </div>
       </section>
@@ -590,20 +609,27 @@ function OptimizedBlock({ items }) {
   );
 }
 
-function ExecutionsBlock({ executions, winnerId }) {
+function ExecutionsBlock({ executions, winnerId, experimentId, briefs, onBriefsChange }) {
   return (
     <div>
       <h3 className="text-sm font-medium text-slate-700 mb-2">3 · Ejecuciones creativas</h3>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {executions.map((ex, i) => (
-          <ExecutionCard key={ex.angle_number ?? i} ex={ex} winnerId={winnerId} />
+          <ExecutionCard
+            key={ex.angle_number ?? i}
+            ex={ex}
+            winnerId={winnerId}
+            experimentId={experimentId}
+            briefs={briefs}
+            onBriefsChange={onBriefsChange}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function ExecutionCard({ ex, winnerId }) {
+function ExecutionCard({ ex, winnerId, experimentId, briefs, onBriefsChange }) {
   const num = ex.angle_number ?? ex.id;
   const id = `angle_${num}`;
   const isWinner = winnerId === id;
@@ -648,9 +674,24 @@ function ExecutionCard({ ex, winnerId }) {
 
       {/* Una mockup card por creative */}
       <div className="space-y-3">
-        {creatives.map((c, i) => (
-          <CreativeMockup key={`${c.platform}-${c.format}-${i}`} creative={c} />
-        ))}
+        {creatives.map((c, i) => {
+          const briefForThis = (briefs || []).find((b) =>
+            b.angle_number === num &&
+            String(b.platform).toLowerCase() === String(c.platform).toLowerCase() &&
+            String(b.format).toLowerCase()   === String(c.format).toLowerCase()
+          );
+          return (
+            <CreativeMockup
+              key={`${c.platform}-${c.format}-${i}`}
+              creative={c}
+              experimentId={experimentId}
+              angleNumber={num}
+              isWinner={isWinner}
+              brief={briefForThis}
+              onBriefsChange={onBriefsChange}
+            />
+          );
+        })}
       </div>
 
       {/* Hashtags + tone */}
@@ -677,7 +718,7 @@ const CHANNEL_RULES = {
   'youtube|video':       { post: [60, 200, 300] },
 };
 
-function CreativeMockup({ creative }) {
+function CreativeMockup({ creative, experimentId, angleNumber, isWinner, brief, onBriefsChange }) {
   const c = creative;
   const platformKey = String(c.platform || '').toLowerCase();
   const formatKey = String(c.format || '').toLowerCase();
@@ -779,7 +820,7 @@ function CreativeMockup({ creative }) {
       {(visual.main_subject || visual.main_visual || visual.scene || visual.background || visual.color_palette || visual.colors) && (
         <details className="text-xs px-3 py-2 border-t border-slate-100">
           <summary className="cursor-pointer text-slate-500 hover:text-slate-800 select-none">
-            Brief visual
+            Brief visual (Ogilvy)
           </summary>
           <div className="mt-2 space-y-1 text-slate-600 bg-slate-50 rounded p-2">
             <Line label="Sujeto"   value={visual.main_subject || visual.main_visual} />
@@ -791,6 +832,285 @@ function CreativeMockup({ creative }) {
             <Line label="Persona"  value={visual.person} />
           </div>
         </details>
+      )}
+
+      {/* Brief de imagen (sólo en el winner) */}
+      {isWinner && experimentId && (
+        <ImageBriefPanel
+          experimentId={experimentId}
+          angleNumber={angleNumber}
+          platform={c.platform}
+          format={c.format}
+          existingBrief={brief}
+          onBriefsChange={onBriefsChange}
+        />
+      )}
+    </div>
+  );
+}
+
+function ImageBriefPanel({ experimentId, angleNumber, platform, format, existingBrief, onBriefsChange }) {
+  const [generating, setGenerating] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const brief = existingBrief?.brief?.image_brief || null;
+  const dirty = draft != null;
+
+  async function handleGenerate() {
+    setError(null);
+    setGenerating(true);
+    try {
+      await api.post(`/api/experiments/${experimentId}/briefs`, {
+        angle_number: angleNumber,
+        platform,
+        format,
+      });
+      if (onBriefsChange) await onBriefsChange();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleSave() {
+    setError(null);
+    try {
+      await api.put(`/api/experiments/${experimentId}/briefs/${existingBrief.id}`, {
+        brief: { image_brief: draft },
+      });
+      setDraft(null);
+      setEditing(false);
+      if (onBriefsChange) await onBriefsChange();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleCopy() {
+    const text = (dirty ? draft : brief)?.final_nano_banana_prompt || '';
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError('No se pudo copiar al portapapeles.');
+    }
+  }
+
+  function startEdit() {
+    setDraft(JSON.parse(JSON.stringify(brief)));
+    setEditing(true);
+  }
+  function cancelEdit() {
+    setDraft(null);
+    setEditing(false);
+  }
+  function patch(path, value) {
+    setDraft((d) => {
+      const next = JSON.parse(JSON.stringify(d));
+      const keys = path.split('.');
+      let obj = next;
+      for (let i = 0; i < keys.length - 1; i++) {
+        if (obj[keys[i]] == null) obj[keys[i]] = {};
+        obj = obj[keys[i]];
+      }
+      obj[keys[keys.length - 1]] = value;
+      return next;
+    });
+  }
+
+  if (!brief) {
+    return (
+      <div className="border-t border-slate-100 px-3 py-3 bg-emerald-50/30">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs text-slate-600">
+            <b className="text-slate-700">Brief para imagen final</b>
+            <div className="text-[11px] text-slate-500">~$0.005 por brief (Haiku) · editable antes de generar la imagen</div>
+          </div>
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
+          >
+            {generating ? 'Generando…' : 'Preparar brief'}
+          </button>
+        </div>
+        {error && <div className="text-xs text-red-600 mt-2">{error}</div>}
+      </div>
+    );
+  }
+
+  const view = dirty ? draft : brief;
+
+  return (
+    <details open className="border-t border-slate-100 px-3 py-3 bg-emerald-50/30 text-xs">
+      <summary className="cursor-pointer flex items-center justify-between gap-2 select-none">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-slate-700">Brief para imagen final</span>
+          {existingBrief?.is_edited && (
+            <span className="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">editado</span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {!editing && (
+            <button onClick={(e) => { e.preventDefault(); startEdit(); }} className="text-brand-600 hover:underline">
+              Editar
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.preventDefault(); handleGenerate(); }}
+            disabled={generating}
+            className="text-slate-500 hover:underline disabled:opacity-50"
+          >
+            {generating ? 'Regenerando…' : 'Regenerar'}
+          </button>
+        </div>
+      </summary>
+
+      <div className="mt-3 space-y-3">
+        {/* Resumen narrativo */}
+        <BriefField
+          label="Scene description"
+          value={view.scene_description}
+          editing={editing}
+          multiline
+          onChange={(v) => patch('scene_description', v)}
+        />
+
+        {/* Sujeto */}
+        <BriefSection title="Sujeto">
+          <BriefField label="Quién/qué"   value={view.subject?.who_what}   editing={editing} multiline onChange={(v) => patch('subject.who_what', v)} />
+          <BriefField label="Pose"        value={view.subject?.pose}       editing={editing} onChange={(v) => patch('subject.pose', v)} />
+          <BriefField label="Expresión"   value={view.subject?.expression} editing={editing} onChange={(v) => patch('subject.expression', v)} />
+          <BriefField label="Vestimenta"  value={view.subject?.attire}     editing={editing} onChange={(v) => patch('subject.attire', v)} />
+        </BriefSection>
+
+        {/* Entorno */}
+        <BriefSection title="Entorno">
+          <BriefField label="Setting" value={view.environment?.setting} editing={editing} multiline onChange={(v) => patch('environment.setting', v)} />
+          <BriefField label="Depth"   value={view.environment?.depth}   editing={editing} onChange={(v) => patch('environment.depth', v)} />
+          <BriefField label="Props"   value={view.environment?.props}   editing={editing} onChange={(v) => patch('environment.props', v)} />
+        </BriefSection>
+
+        {/* Técnicos */}
+        <BriefSection title="Técnicos">
+          <BriefField label="Composición" value={view.composition} editing={editing} onChange={(v) => patch('composition', v)} />
+          <BriefField label="Lighting"    value={view.lighting}    editing={editing} multiline onChange={(v) => patch('lighting', v)} />
+          <BriefField label="Style"       value={view.style}       editing={editing} onChange={(v) => patch('style', v)} />
+          <BriefField label="Camera"      value={view.camera}      editing={editing} onChange={(v) => patch('camera', v)} />
+          <BriefField
+            label="Color palette"
+            value={Array.isArray(view.color_palette) ? view.color_palette.join(' · ') : view.color_palette}
+            editing={editing}
+            onChange={(v) => patch('color_palette', v.split(/\s*·\s*|\s*,\s*/).filter(Boolean))}
+          />
+          <BriefField label="Aspect ratio" value={view.aspect_ratio} editing={editing} onChange={(v) => patch('aspect_ratio', v)} />
+        </BriefSection>
+
+        {/* Overlay & CTA */}
+        <BriefSection title="Overlay text & CTA">
+          <BriefField label="Primary text"     value={view.overlay_specs?.primary_text}       editing={editing} onChange={(v) => patch('overlay_specs.primary_text', v)} />
+          <BriefField label="Primary position" value={view.overlay_specs?.primary_position}   editing={editing} onChange={(v) => patch('overlay_specs.primary_position', v)} />
+          <BriefField label="Primary typo"     value={view.overlay_specs?.primary_typography} editing={editing} onChange={(v) => patch('overlay_specs.primary_typography', v)} />
+          <BriefField label="Secondary text"   value={view.overlay_specs?.secondary_text}     editing={editing} onChange={(v) => patch('overlay_specs.secondary_text', v)} />
+          <BriefField label="CTA text"         value={view.overlay_specs?.cta_button?.text}     editing={editing} onChange={(v) => patch('overlay_specs.cta_button.text', v)} />
+          <BriefField label="CTA position"     value={view.overlay_specs?.cta_button?.position} editing={editing} onChange={(v) => patch('overlay_specs.cta_button.position', v)} />
+          <BriefField label="CTA color"        value={view.overlay_specs?.cta_button?.color}    editing={editing} onChange={(v) => patch('overlay_specs.cta_button.color', v)} />
+          <BriefField label="CTA shape"        value={view.overlay_specs?.cta_button?.shape}    editing={editing} onChange={(v) => patch('overlay_specs.cta_button.shape', v)} />
+        </BriefSection>
+
+        <BriefField
+          label="Negative prompts"
+          value={view.negative_prompts}
+          editing={editing}
+          multiline
+          onChange={(v) => patch('negative_prompts', v)}
+        />
+
+        {/* final prompt para Nano Banana */}
+        <div className="bg-white border border-emerald-300 rounded p-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-emerald-700 font-semibold">Prompt final para Nano Banana</span>
+            <button
+              onClick={handleCopy}
+              className="text-[11px] text-emerald-700 hover:underline"
+            >
+              {copied ? '✓ Copiado' : 'Copiar prompt'}
+            </button>
+          </div>
+          {editing ? (
+            <textarea
+              rows={6}
+              value={view.final_nano_banana_prompt || ''}
+              onChange={(e) => patch('final_nano_banana_prompt', e.target.value)}
+              className="w-full font-mono text-[11px] border border-slate-300 rounded p-2"
+            />
+          ) : (
+            <p className="font-mono text-[11px] text-slate-800 whitespace-pre-wrap">
+              {view.final_nano_banana_prompt || '(sin prompt generado)'}
+            </p>
+          )}
+        </div>
+
+        {error && <div className="text-red-600">{error}</div>}
+
+        {editing && (
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={cancelEdit} className="text-slate-600 hover:underline">Cancelar</button>
+            <button onClick={handleSave} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded">
+              Guardar cambios
+            </button>
+          </div>
+        )}
+
+        {existingBrief?.cost_usd != null && !editing && (
+          <div className="text-[10px] text-slate-400 text-right">
+            Generado con {existingBrief.generated_by_model} · USD {Number(existingBrief.cost_usd).toFixed(4)}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function BriefSection({ title, children }) {
+  return (
+    <div className="border border-slate-200 bg-white rounded p-2.5">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1.5">{title}</div>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+
+function BriefField({ label, value, editing, multiline, onChange }) {
+  return (
+    <div className="grid grid-cols-[110px_1fr] gap-2 items-start">
+      <span className="text-slate-500 text-[11px] pt-0.5">{label}</span>
+      {editing ? (
+        multiline ? (
+          <textarea
+            rows={2}
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+            className="text-xs border border-slate-300 rounded px-2 py-1 w-full"
+          />
+        ) : (
+          <input
+            type="text"
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+            className="text-xs border border-slate-300 rounded px-2 py-1 w-full"
+          />
+        )
+      ) : (
+        <span className="text-slate-700 break-words">
+          {value || <i className="text-slate-400">—</i>}
+        </span>
       )}
     </div>
   );
