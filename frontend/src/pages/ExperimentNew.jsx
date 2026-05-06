@@ -2,24 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 
-// Canales predefinidos. Cada uno es una combinación específica (platform, format)
-// que el modelo va a respetar 1:1 — sin agregar variantes ni cross-products.
-const CHANNEL_OPTIONS = [
-  { platform: 'Facebook',  format: 'feed',     label: 'Facebook · feed' },
-  { platform: 'Facebook',  format: 'stories',  label: 'Facebook · stories' },
-  { platform: 'Facebook',  format: 'reel',     label: 'Facebook · reel' },
-  { platform: 'Instagram', format: 'feed',     label: 'Instagram · feed' },
-  { platform: 'Instagram', format: 'stories',  label: 'Instagram · stories' },
-  { platform: 'Instagram', format: 'reel',     label: 'Instagram · reel' },
-  { platform: 'Instagram', format: 'carousel', label: 'Instagram · carousel' },
-  { platform: 'LinkedIn',  format: 'feed',     label: 'LinkedIn · feed' },
-  { platform: 'LinkedIn',  format: 'carousel', label: 'LinkedIn · carousel' },
-  { platform: 'TikTok',    format: 'video',    label: 'TikTok · video' },
-  { platform: 'YouTube',   format: 'video',    label: 'YouTube · video' },
-  { platform: 'YouTube',   format: 'shorts',   label: 'YouTube · shorts' },
-  { platform: 'Twitter',   format: 'feed',     label: 'Twitter · feed' },
-  { platform: 'Google',    format: 'search',   label: 'Google · search' },
-  { platform: 'Google',    format: 'display',  label: 'Google · display' },
+// Plataformas con su formato flagship/nativo. El experimento ahora trabaja
+// a nivel PLATAFORMA: una idea creativa por red en su formato principal.
+// Las adaptaciones a stories / reel / carousel se hacen en una fase posterior
+// desde el creative ganador, no se generan upfront en el pipeline.
+const PLATFORM_OPTIONS = [
+  { platform: 'Facebook',  flagship: 'feed',    label: 'Facebook',  hint: 'feed 1:1' },
+  { platform: 'Instagram', flagship: 'feed',    label: 'Instagram', hint: 'feed 1:1' },
+  { platform: 'LinkedIn',  flagship: 'feed',    label: 'LinkedIn',  hint: 'feed 1.91:1' },
+  { platform: 'TikTok',    flagship: 'video',   label: 'TikTok',    hint: 'video 9:16' },
+  { platform: 'YouTube',   flagship: 'video',   label: 'YouTube',   hint: 'video 16:9' },
+  { platform: 'Twitter',   flagship: 'feed',    label: 'Twitter / X', hint: 'feed 16:9' },
+  { platform: 'Google',    flagship: 'display', label: 'Google',    hint: 'display' },
 ];
 
 const channelKey = (c) => `${c.platform}|${c.format}`;
@@ -56,14 +50,12 @@ export default function ExperimentNew() {
 
     setForm((f) => {
       if (f.channels.length > 0) return f; // no pisar selección manual
-      const pp = selectedProduct.platforms || [];
-      const ff = selectedProduct.formats   || [];
-      const seeded = [];
-      for (const p of pp) for (const fmt of ff) {
-        // matchear contra opciones predefinidas
-        const opt = CHANNEL_OPTIONS.find((o) => o.platform === p && o.format === fmt);
-        if (opt) seeded.push({ platform: opt.platform, format: opt.format });
-      }
+      // Precargar plataformas del producto, mapeando cada una a su formato flagship.
+      const productPlatforms = selectedProduct.platforms || [];
+      const seeded = productPlatforms
+        .map((p) => PLATFORM_OPTIONS.find((o) => o.platform === p))
+        .filter(Boolean)
+        .map((o) => ({ platform: o.platform, format: o.flagship }));
       return { ...f, channels: seeded };
     });
 
@@ -86,15 +78,15 @@ export default function ExperimentNew() {
   );
 
   function update(k, v) { setForm((f) => ({ ...f, [k]: v })); }
-  function toggleChannel(option) {
+  function togglePlatform(option) {
+    // Cada plataforma se traduce a su canal flagship (platform + format nativo).
     setForm((f) => {
-      const key = channelKey(option);
-      const exists = f.channels.some((c) => channelKey(c) === key);
+      const exists = f.channels.some((c) => c.platform === option.platform);
       return {
         ...f,
         channels: exists
-          ? f.channels.filter((c) => channelKey(c) !== key)
-          : [...f.channels, { platform: option.platform, format: option.format }],
+          ? f.channels.filter((c) => c.platform !== option.platform)
+          : [...f.channels, { platform: option.platform, format: option.flagship }],
       };
     });
   }
@@ -201,14 +193,14 @@ export default function ExperimentNew() {
       </Field>
 
       <Field
-        label="Canales para este experimento"
+        label="Plataformas para este experimento"
         required
-        hint={`Marcá cada canal específico (plataforma + formato) donde vas a correr. El Ogilvy genera EXACTAMENTE un creativo por canal seleccionado — ${form.channels.length} ${form.channels.length === 1 ? 'creativo será generado' : 'creativos serán generados'}.`}
+        hint={`Cada plataforma genera 1 creative en su formato flagship — vas a obtener ${form.channels.length} ${form.channels.length === 1 ? 'idea creativa nativa' : 'ideas creativas nativas'} para evaluar. Las adaptaciones a stories / reel / carousel se generan después desde el creative ganador.`}
       >
-        <ChannelChips
-          options={CHANNEL_OPTIONS}
+        <PlatformChips
+          options={PLATFORM_OPTIONS}
           selected={form.channels}
-          onToggle={toggleChannel}
+          onToggle={togglePlatform}
         />
       </Field>
 
@@ -300,24 +292,26 @@ function Field({ label, required, hint, children }) {
   );
 }
 
-function ChannelChips({ options, selected, onToggle }) {
+function PlatformChips({ options, selected, onToggle }) {
   return (
     <div className="flex flex-wrap gap-2">
       {options.map((opt) => {
-        const key = channelKey(opt);
-        const active = selected.some((c) => channelKey(c) === key);
+        const active = selected.some((c) => c.platform === opt.platform);
         return (
           <button
-            key={key}
+            key={opt.platform}
             type="button"
             onClick={() => onToggle(opt)}
-            className={`text-xs px-2.5 py-1 rounded-full border transition ${
+            className={`text-xs px-3 py-1.5 rounded-full border transition flex items-center gap-1.5 ${
               active
                 ? 'bg-brand-600 border-brand-600 text-white'
                 : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400'
             }`}
           >
-            {opt.label}
+            <span className="font-medium">{opt.label}</span>
+            <span className={`text-[10px] ${active ? 'text-white/70' : 'text-slate-400'}`}>
+              · {opt.hint}
+            </span>
           </button>
         );
       })}
