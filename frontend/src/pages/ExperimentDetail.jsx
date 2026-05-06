@@ -890,6 +890,7 @@ function CreativeMockup({ creative, experimentId, angleNumber, isWinner, brief, 
 
 function ImageBriefPanel({ experimentId, angleNumber, platform, format, existingBrief, onBriefsChange }) {
   const [generating, setGenerating] = useState(false);
+  const [generatingImage, setGeneratingImage] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [error, setError] = useState(null);
@@ -897,6 +898,7 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
 
   const brief = existingBrief?.brief?.image_brief || null;
   const dirty = draft != null;
+  const hasImage = !!existingBrief?.image_url;
 
   async function handleGenerate() {
     setError(null);
@@ -938,6 +940,24 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
       setTimeout(() => setCopied(false), 1800);
     } catch {
       setError('No se pudo copiar al portapapeles.');
+    }
+  }
+
+  async function handleGenerateImage() {
+    if (!existingBrief?.id) return;
+    if (!confirm(hasImage
+      ? 'Regenerar la imagen sobreescribe la anterior. ~$0.04. ¿Continuar?'
+      : 'Generar imagen con Nano Banana. ~$0.04. ¿Continuar?'
+    )) return;
+    setError(null);
+    setGeneratingImage(true);
+    try {
+      await api.post(`/api/experiments/${experimentId}/briefs/${existingBrief.id}/image`);
+      if (onBriefsChange) await onBriefsChange();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGeneratingImage(false);
     }
   }
 
@@ -1083,6 +1103,54 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
           multiline
           onChange={(v) => patch('negative_prompts', v)}
         />
+
+        {/* Imagen generada por Nano Banana */}
+        <div className="bg-white border border-emerald-300 rounded p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-wide text-emerald-700 font-semibold">
+              Imagen generada (Nano Banana)
+            </span>
+            <button
+              onClick={handleGenerateImage}
+              disabled={generatingImage || editing}
+              className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded disabled:opacity-50"
+            >
+              {generatingImage
+                ? 'Generando…'
+                : hasImage ? 'Regenerar imagen (~$0.04)' : 'Generar imagen (~$0.04)'}
+            </button>
+          </div>
+          {hasImage ? (
+            <div>
+              <a href={existingBrief.image_url} target="_blank" rel="noopener noreferrer">
+                <img
+                  src={existingBrief.image_url}
+                  alt="Imagen generada"
+                  className="w-full max-h-[480px] object-contain rounded border border-slate-200 bg-slate-50"
+                />
+              </a>
+              <div className="text-[10px] text-slate-400 mt-1.5 flex items-center justify-between">
+                <span>
+                  {existingBrief.image_model} · USD {Number(existingBrief.image_cost_usd || 0).toFixed(3)} ·{' '}
+                  {existingBrief.image_generated_at ? new Date(existingBrief.image_generated_at).toLocaleString('es-AR') : ''}
+                </span>
+                <a href={existingBrief.image_url} download className="text-emerald-700 hover:underline">
+                  Descargar
+                </a>
+              </div>
+              {existingBrief.is_stale && (
+                <div className="mt-2 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                  ⚠ El creative cambió desde que se generó esta imagen. Regenerá el brief y después la imagen para reflejar el copy nuevo.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-500">
+              Cuando estés conforme con el brief, click el botón. Toma ~5-15 segundos.
+              La imagen se guarda en Cloudinary y queda asociada a este creative.
+            </div>
+          )}
+        </div>
 
         {/* final prompt para Nano Banana */}
         <div className="bg-white border border-emerald-300 rounded p-3">

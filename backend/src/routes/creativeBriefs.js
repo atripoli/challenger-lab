@@ -4,6 +4,7 @@ const { z } = require('zod');
 const asyncHandler = require('../middleware/asyncHandler');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { generateBrief, listBriefs, updateBrief } = require('../services/imageBriefWriter');
+const { generateImageForBrief, COST_PER_IMAGE_USD } = require('../services/imageGenerator');
 
 const router = express.Router({ mergeParams: true });
 router.use(requireAuth);
@@ -59,6 +60,24 @@ router.put(
       res.json({ brief });
     } catch (err) {
       res.status(404).json({ error: err.message });
+    }
+  }),
+);
+
+// POST /api/experiments/:experimentId/briefs/:briefId/image — genera (o
+// regenera) la imagen del brief con Nano Banana. Costo fijo aprox $0.04.
+router.post(
+  '/:briefId/image',
+  requireRole('admin', 'analyst'),
+  asyncHandler(async (req, res) => {
+    try {
+      const brief = await generateImageForBrief(Number(req.params.briefId));
+      res.status(201).json({ brief, cost_usd: COST_PER_IMAGE_USD });
+    } catch (err) {
+      const status = /no encontrado/i.test(err.message) ? 404
+        : /GEMINI_API_KEY/.test(err.message)         ? 503
+        : 500;
+      res.status(status).json({ error: err.message });
     }
   }),
 );
