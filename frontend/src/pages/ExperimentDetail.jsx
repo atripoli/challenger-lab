@@ -895,6 +895,7 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
   const [draft, setDraft] = useState(null);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [downloadingPack, setDownloadingPack] = useState(false);
 
   // El backend guarda el brief plano en existingBrief.brief (con
   // final_nano_banana_prompt en la raíz). Mantenemos fallback al schema
@@ -1141,20 +1142,30 @@ function ImageBriefPanel({ experimentId, angleNumber, platform, format, existing
                   {existingBrief.image_generated_at ? new Date(existingBrief.image_generated_at).toLocaleString('es-AR') : ''}
                 </span>
                 <button
-                  onClick={async () => {
+                  type="button"
+                  disabled={downloadingPack}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const path = `/api/experiments/${experimentId}/briefs/${existingBrief.id}/pack`;
+                    const fname = `brief-${existingBrief.id}-${existingBrief.platform}-${existingBrief.format}.zip`;
+                    console.log('[pack] click → GET', path);
+                    setError(null);
+                    setDownloadingPack(true);
                     try {
-                      await api.download(
-                        `/api/experiments/${experimentId}/briefs/${existingBrief.id}/pack`,
-                        `brief-${existingBrief.id}-${existingBrief.platform}-${existingBrief.format}.zip`,
-                      );
+                      await api.download(path, fname);
+                      console.log('[pack] download triggered:', fname);
                     } catch (err) {
-                      setError(err.message);
+                      console.error('[pack] error:', err);
+                      setError(`Pack: ${err.message}`);
+                    } finally {
+                      setDownloadingPack(false);
                     }
                   }}
-                  className="text-emerald-700 hover:underline"
+                  className="text-emerald-700 hover:underline disabled:opacity-50"
                   title="ZIP con la imagen + copy.txt (post copy, headline, CTA, etc.)"
                 >
-                  Descargar pack
+                  {downloadingPack ? 'Bajando…' : 'Descargar pack'}
                 </button>
               </div>
               {existingBrief.is_stale && (
