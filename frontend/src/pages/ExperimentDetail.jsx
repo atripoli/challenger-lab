@@ -161,7 +161,7 @@ export default function ExperimentDetail() {
               winnerId={exp.winner_id}
               experimentId={exp.id}
               briefs={briefs}
-              onBriefsChange={loadBriefs}
+              onBriefsChange={async () => { await load(); await loadBriefs(); }}
             />
           )}
           {exp.scores            && <ScoresBlock      scores={exp.scores} winnerId={exp.winner_id} champion={exp.champion_score} />}
@@ -720,6 +720,7 @@ const CHANNEL_RULES = {
 
 function CreativeMockup({ creative, experimentId, angleNumber, isWinner, brief, onBriefsChange }) {
   const c = creative;
+  const [editing, setEditing] = useState(false);
   const platformKey = String(c.platform || '').toLowerCase();
   const formatKey = String(c.format || '').toLowerCase();
   const isVertical = c.aspect_ratio === '9:16' || formatKey === 'stories' || formatKey === 'reel';
@@ -742,28 +743,62 @@ function CreativeMockup({ creative, experimentId, angleNumber, isWinner, brief, 
 
   const pillCls = PLATFORM_PILL[platformKey] || 'bg-slate-100 text-slate-700';
 
+  if (editing && isWinner) {
+    return (
+      <CreativeEditPanel
+        creative={c}
+        experimentId={experimentId}
+        angleNumber={angleNumber}
+        onCancel={() => setEditing(false)}
+        onSaved={async () => {
+          setEditing(false);
+          // El parent se refresca via onBriefsChange — ese callback dispara
+          // load() del experiment Y loadBriefs() en el componente padre.
+          if (onBriefsChange) await onBriefsChange();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="border border-slate-200 rounded-md bg-white overflow-hidden">
 
       {/* Tab del creativo */}
       <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${pillCls}`}>
+          <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${pillCls}`}>
             {c.platform}
           </span>
           {c.format && (
-            <span className="text-[10px] text-slate-500">{c.format}</span>
+            <span className="text-[10px] text-slate-500">
+              <span className="text-slate-400">native:</span> {c.format}
+            </span>
           )}
           {c.aspect_ratio && (
             <span className="text-[10px] text-slate-400 font-mono">{c.aspect_ratio}</span>
           )}
+          {c.is_edited && (
+            <span className="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">
+              editado
+            </span>
+          )}
         </div>
-        {c.post_copy && (
-          <div className="text-[10px] font-mono text-slate-500">
-            post: {len}c
-            {postStatus && <span className={`ml-1 ${postStatus.color}`}>· {postStatus.label}</span>}
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {c.post_copy && (
+            <div className="text-[10px] font-mono text-slate-500">
+              post: {len}c
+              {postStatus && <span className={`ml-1 ${postStatus.color}`}>· {postStatus.label}</span>}
+            </div>
+          )}
+          {isWinner && (
+            <button
+              onClick={() => setEditing(true)}
+              className="text-[11px] text-brand-600 hover:underline"
+            >
+              Editar
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 1. POST COPY */}
@@ -1113,6 +1148,145 @@ function BriefField({ label, value, editing, multiline, onChange }) {
         </span>
       )}
     </div>
+  );
+}
+
+function CreativeEditPanel({ creative, experimentId, angleNumber, onCancel, onSaved }) {
+  const c = creative;
+  const [draft, setDraft] = useState({
+    post_copy:       c.post_copy ?? '',
+    headline:        c.headline ?? '',
+    description:     c.description ?? '',
+    cta_button:      c.cta_button ?? '',
+    system_cta_type: c.system_cta_type ?? '',
+    overlay_text: {
+      primary:   c.overlay_text?.primary   ?? '',
+      secondary: c.overlay_text?.secondary ?? '',
+    },
+    visual: {
+      main_subject:     c.visual?.main_subject     ?? '',
+      scene:            c.visual?.scene            ?? '',
+      color_palette:    c.visual?.color_palette    ?? '',
+      style:            c.visual?.style            ?? '',
+      graphic_elements: c.visual?.graphic_elements ?? '',
+      mood:             c.visual?.mood             ?? '',
+    },
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  function set(k, v) { setDraft((d) => ({ ...d, [k]: v })); }
+  function setOverlay(k, v) { setDraft((d) => ({ ...d, overlay_text: { ...d.overlay_text, [k]: v } })); }
+  function setVisual(k, v)  { setDraft((d) => ({ ...d, visual: { ...d.visual, [k]: v } })); }
+
+  async function save() {
+    setError(null);
+    setSaving(true);
+    try {
+      const edits = {
+        post_copy:       draft.post_copy.trim() || null,
+        headline:        draft.headline.trim() || null,
+        description:     draft.description.trim() || null,
+        cta_button:      draft.cta_button.trim() || null,
+        system_cta_type: draft.system_cta_type.trim() || null,
+        overlay_text: {
+          primary:   draft.overlay_text.primary.trim() || null,
+          secondary: draft.overlay_text.secondary.trim() || null,
+        },
+        visual: { ...draft.visual },
+      };
+      await api.patch(`/api/experiments/${experimentId}/creative-edit`, {
+        angle_number: angleNumber,
+        platform:     c.platform,
+        format:       c.format,
+        edits,
+      });
+      if (onSaved) await onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="border border-amber-300 rounded-md bg-amber-50/40 overflow-hidden">
+      <div className="px-3 py-2 bg-amber-100 border-b border-amber-200 flex items-center justify-between">
+        <div className="text-xs font-medium text-amber-900">
+          Editando creative · {c.platform} {c.format}
+        </div>
+        <div className="flex gap-2 text-xs">
+          <button onClick={onCancel} disabled={saving} className="text-slate-700 hover:underline">Cancelar</button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded disabled:opacity-50"
+          >
+            {saving ? 'Guardando…' : 'Guardar cambios'}
+          </button>
+        </div>
+      </div>
+
+      <div className="p-3 space-y-3 text-xs">
+        <EditField label="Post copy (texto sobre el aviso)" multiline rows={4}
+          value={draft.post_copy} onChange={(v) => set('post_copy', v)} />
+
+        <div className="grid grid-cols-2 gap-3">
+          <EditField label="Headline (debajo de imagen)"
+            value={draft.headline} onChange={(v) => set('headline', v)} />
+          <EditField label="Description (debajo del headline)"
+            value={draft.description} onChange={(v) => set('description', v)} />
+        </div>
+
+        <fieldset className="border border-slate-200 rounded p-3 space-y-2 bg-white">
+          <legend className="text-[10px] uppercase tracking-wide text-slate-500 px-1">Overlay text (sobre la imagen)</legend>
+          <EditField label="Primary"
+            value={draft.overlay_text.primary} onChange={(v) => setOverlay('primary', v)} />
+          <EditField label="Secondary (opcional)"
+            value={draft.overlay_text.secondary} onChange={(v) => setOverlay('secondary', v)} />
+        </fieldset>
+
+        <div className="grid grid-cols-2 gap-3">
+          <EditField label="CTA button (texto en la imagen)"
+            value={draft.cta_button} onChange={(v) => set('cta_button', v)} />
+          <EditField label="System CTA (Sign Up / Learn More / etc)"
+            value={draft.system_cta_type} onChange={(v) => set('system_cta_type', v)} />
+        </div>
+
+        <fieldset className="border border-slate-200 rounded p-3 space-y-2 bg-white">
+          <legend className="text-[10px] uppercase tracking-wide text-slate-500 px-1">Brief visual (Ogilvy)</legend>
+          <EditField label="Sujeto principal" multiline rows={2}
+            value={draft.visual.main_subject} onChange={(v) => setVisual('main_subject', v)} />
+          <EditField label="Escena / fondo" multiline rows={2}
+            value={draft.visual.scene} onChange={(v) => setVisual('scene', v)} />
+          <div className="grid grid-cols-2 gap-3">
+            <EditField label="Paleta"  value={draft.visual.color_palette} onChange={(v) => setVisual('color_palette', v)} />
+            <EditField label="Estilo"  value={draft.visual.style} onChange={(v) => setVisual('style', v)} />
+            <EditField label="Mood"    value={draft.visual.mood} onChange={(v) => setVisual('mood', v)} />
+            <EditField label="Gráficos" value={draft.visual.graphic_elements} onChange={(v) => setVisual('graphic_elements', v)} />
+          </div>
+        </fieldset>
+
+        {error && <div className="text-red-600">{error}</div>}
+        <div className="text-[10px] text-slate-500 italic">
+          Si tenés un brief de imagen ya generado, regeneralo después de guardar para que refleje tus cambios.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditField({ label, value, onChange, multiline, rows }) {
+  const cls = 'mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-xs';
+  return (
+    <label className="block">
+      <span className="text-[11px] text-slate-600">{label}</span>
+      {multiline ? (
+        <textarea rows={rows || 2} value={value || ''} onChange={(e) => onChange(e.target.value)} className={cls} />
+      ) : (
+        <input type="text" value={value || ''} onChange={(e) => onChange(e.target.value)} className={cls} />
+      )}
+    </label>
   );
 }
 

@@ -257,6 +257,92 @@ router.post(
   }),
 );
 
+// PATCH /:id/creative-edit — editor manual del creative del winner.
+// Permite refinar post_copy / headline / description / overlay_text / cta /
+// visual sin re-correr el pipeline. Marca el creative con is_edited=true.
+const creativeEditSchema = z.object({
+  angle_number: z.number().int().positive(),
+  platform:     z.string().min(1),
+  format:       z.string().min(1),
+  edits: z.object({
+    post_copy:        z.string().nullable().optional(),
+    headline:         z.string().nullable().optional(),
+    description:      z.string().nullable().optional(),
+    cta_button:       z.string().nullable().optional(),
+    system_cta_type:  z.string().nullable().optional(),
+    overlay_text: z.object({
+      primary:   z.string().nullable().optional(),
+      secondary: z.string().nullable().optional(),
+    }).optional(),
+    visual: z.object({
+      main_subject:     z.string().optional(),
+      scene:            z.string().optional(),
+      color_palette:    z.string().optional(),
+      style:            z.string().optional(),
+      graphic_elements: z.string().optional(),
+      mood:             z.string().optional(),
+    }).optional(),
+  }),
+});
+
+router.patch(
+  '/:id/creative-edit',
+  requireRole('admin', 'analyst'),
+  asyncHandler(async (req, res) => {
+    const data = creativeEditSchema.parse(req.body);
+    const expId = Number(req.params.id);
+
+    const { rows } = await pool.query(
+      `SELECT executions FROM experiments WHERE id = $1 AND deleted_at IS NULL`,
+      [expId],
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Experimento no encontrado' });
+    const executions = rows[0].executions;
+    if (!Array.isArray(executions)) return res.status(400).json({ error: 'Sin executions' });
+
+    let updated = false;
+    for (const ex of executions) {
+      if (ex.angle_number !== data.angle_number) continue;
+      for (const c of ex.creatives || []) {
+        const samePlatform = String(c.platform || '').toLowerCase() === data.platform.toLowerCase();
+        const sameFormat   = String(c.format   || '').toLowerCase() === data.format.toLowerCase();
+        if (!samePlatform || !sameFormat) continue;
+
+        const e = data.edits;
+        if (e.post_copy        !== undefined) c.post_copy       = e.post_copy;
+        if (e.headline         !== undefined) c.headline        = e.headline;
+        if (e.description      !== undefined) c.description     = e.description;
+        if (e.cta_button       !== undefined) c.cta_button      = e.cta_button;
+        if (e.system_cta_type  !== undefined) c.system_cta_type = e.system_cta_type;
+        if (e.overlay_text) {
+          c.overlay_text = c.overlay_text || {};
+          if ('primary'   in e.overlay_text) c.overlay_text.primary   = e.overlay_text.primary;
+          if ('secondary' in e.overlay_text) c.overlay_text.secondary = e.overlay_text.secondary;
+        }
+        if (e.visual) {
+          c.visual = c.visual || {};
+          for (const k of Object.keys(e.visual)) c.visual[k] = e.visual[k];
+        }
+        c.is_edited = true;
+        c.edited_at = new Date().toISOString();
+        updated = true;
+      }
+    }
+
+    if (!updated) {
+      return res.status(404).json({
+        error: `Creative no encontrado (angle_number=${data.angle_number}, ${data.platform}/${data.format})`,
+      });
+    }
+
+    await pool.query(
+      `UPDATE experiments SET executions = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(executions), expId],
+    );
+    res.json({ success: true });
+  }),
+);
+
 router.delete(
   '/:id',
   requireRole('admin'),
